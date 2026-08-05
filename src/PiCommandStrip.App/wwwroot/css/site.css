@@ -1,0 +1,139 @@
+:root {
+    color-scheme: dark;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: #09111f;
+    color: #f7f9fc;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    background:
+        radial-gradient(circle at top right, rgb(35 93 144 / 45%), transparent 45%),
+        #09111f;
+}
+
+.dashboard {
+    width: min(100%, 1024px);
+    min-height: min(100vh, 600px);
+    margin: 0 auto;
+    padding: clamp(2rem, 6vw, 4.5rem);
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr);
+    align-items: center;
+    gap: 3rem;
+}
+
+.eyebrow {
+    margin: 0 0 0.75rem;
+    color: #74c7ff;
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+    margin-top: 0;
+}
+
+h1 {
+    margin-bottom: 1rem;
+    font-size: clamp(3rem, 7vw, 5.25rem);
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+}
+
+.intro {
+    max-width: 38rem;
+    margin-bottom: 0;
+    color: #bdcad9;
+    font-size: 1.25rem;
+    line-height: 1.55;
+}
+
+.health-card {
+    padding: 2rem;
+    border: 1px solid rgb(151 195 225 / 28%);
+    border-radius: 1.25rem;
+    background: rgb(13 28 47 / 82%);
+    box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 25%);
+}
+
+.status-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.status-indicator {
+    width: 1rem;
+    height: 1rem;
+    margin-top: 0.35rem;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #f5b942;
+    box-shadow: 0 0 0.8rem currentColor;
+    color: #f5b942;
+}
+
+.status-indicator.is-healthy {
+    background: #46d890;
+    color: #46d890;
+}
+
+.status-indicator.is-unavailable {
+    background: #ff6b6b;
+    color: #ff6b6b;
+}
+
+h2 {
+    margin-bottom: 0.4rem;
+    font-size: 1.35rem;
+}
+
+#health-status {
+    margin-bottom: 0;
+    color: #bdcad9;
+    line-height: 1.4;
+}
+
+dl {
+    margin: 1.75rem 0 0;
+    display: grid;
+    gap: 1rem;
+}
+
+dl div {
+    padding-top: 1rem;
+    border-top: 1px solid rgb(151 195 225 / 18%);
+}
+
+dt {
+    margin-bottom: 0.3rem;
+    color: #8fa4b9;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+    .dashboard {
+        grid-template-columns: 1fr;
+        align-content: center;
+        gap: 2rem;
+    }
+}

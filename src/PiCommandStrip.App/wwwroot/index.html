@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pi Command Strip</title>
+    <link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+    <main class="dashboard">
+        <header>
+            <p class="eyebrow">Local dashboard</p>
+            <h1>Pi Command Strip</h1>
+            <p class="intro">The first building block for a context-aware touchscreen command strip.</p>
+        </header>
+
+        <section class="health-card" aria-labelledby="health-heading">
+            <div class="status-row">
+                <span id="status-indicator" class="status-indicator" aria-hidden="true"></span>
+                <div>
+                    <h2 id="health-heading">Application health</h2>
+                    <p id="health-status" role="status" aria-live="polite">Checking /health…</p>
+                </div>
+            </div>
+            <dl id="health-details" hidden>
+                <div>
+                    <dt>Application</dt>
+                    <dd id="application-name">—</dd>
+                </div>
+                <div>
+                    <dt>Server time</dt>
+                    <dd id="timestamp">—</dd>
+                </div>
+            </dl>
+        </section>
+    </main>
+
+    <script src="/js/dashboard.js"></script>
+</body>
+</html>
