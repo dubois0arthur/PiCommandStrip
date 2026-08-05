@@ -14,25 +14,41 @@
             <p class="intro">The first building block for a context-aware touchscreen command strip.</p>
         </header>
 
-        <section class="health-card" aria-labelledby="health-heading">
-            <div class="status-row">
-                <span id="status-indicator" class="status-indicator" aria-hidden="true"></span>
-                <div>
-                    <h2 id="health-heading">Application health</h2>
-                    <p id="health-status" role="status" aria-live="polite">Checking /health…</p>
+        <div class="status-stack">
+            <section class="status-card" aria-labelledby="connection-heading">
+                <div class="status-row">
+                    <span id="websocket-indicator" class="status-indicator" aria-hidden="true"></span>
+                    <div>
+                        <h2 id="connection-heading">WebSocket</h2>
+                        <p id="websocket-status" role="status" aria-live="polite">Connecting&hellip;</p>
+                    </div>
                 </div>
-            </div>
-            <dl id="health-details" hidden>
-                <div>
-                    <dt>Application</dt>
-                    <dd id="application-name">—</dd>
+                <div class="ping-row">
+                    <button id="ping-button" type="button" disabled>Ping server</button>
+                    <p id="ping-result" aria-live="polite">No ping sent yet.</p>
                 </div>
-                <div>
-                    <dt>Server time</dt>
-                    <dd id="timestamp">—</dd>
+            </section>
+
+            <section class="status-card" aria-labelledby="health-heading">
+                <div class="status-row">
+                    <span id="health-indicator" class="status-indicator" aria-hidden="true"></span>
+                    <div>
+                        <h2 id="health-heading">Application health</h2>
+                        <p id="health-status" role="status" aria-live="polite">Checking /health&hellip;</p>
+                    </div>
                 </div>
-            </dl>
-        </section>
+                <dl id="health-details" hidden>
+                    <div>
+                        <dt>Application</dt>
+                        <dd id="application-name">&mdash;</dd>
+                    </div>
+                    <div>
+                        <dt>Server time</dt>
+                        <dd id="timestamp">&mdash;</dd>
+                    </div>
+                </dl>
+            </section>
+        </div>
     </main>
 
     <script src="/js/dashboard.js"></script>

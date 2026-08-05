@@ -22,7 +22,7 @@ body {
     width: min(100%, 1024px);
     min-height: min(100vh, 600px);
     margin: 0 auto;
-    padding: clamp(2rem, 6vw, 4.5rem);
+    padding: clamp(2rem, 5vw, 3.5rem);
     display: grid;
     grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr);
     align-items: center;
@@ -59,8 +59,13 @@ h1 {
     line-height: 1.55;
 }
 
-.health-card {
-    padding: 2rem;
+.status-stack {
+    display: grid;
+    gap: 1rem;
+}
+
+.status-card {
+    padding: 1.5rem;
     border: 1px solid rgb(151 195 225 / 28%);
     border-radius: 1.25rem;
     background: rgb(13 28 47 / 82%);
@@ -84,6 +89,11 @@ h1 {
     color: #f5b942;
 }
 
+.status-indicator.is-connecting {
+    background: #f5b942;
+    color: #f5b942;
+}
+
 .status-indicator.is-healthy {
     background: #46d890;
     color: #46d890;
@@ -103,6 +113,48 @@ h2 {
     margin-bottom: 0;
     color: #bdcad9;
     line-height: 1.4;
+}
+
+#websocket-status {
+    margin-bottom: 0;
+    color: #bdcad9;
+    line-height: 1.4;
+}
+
+.ping-row {
+    margin-top: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+button {
+    min-width: 9rem;
+    min-height: 3rem;
+    padding: 0.75rem 1.25rem;
+    border: 0;
+    border-radius: 0.8rem;
+    background: #74c7ff;
+    color: #07111e;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+button:focus-visible {
+    outline: 3px solid #ffffff;
+    outline-offset: 3px;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+#ping-result {
+    margin: 0;
+    color: #bdcad9;
+    font-size: 0.95rem;
 }
 
 dl {
@@ -135,5 +187,10 @@ dd {
         grid-template-columns: 1fr;
         align-content: center;
         gap: 2rem;
+    }
+
+    .ping-row {
+        align-items: stretch;
+        flex-direction: column;
     }
 }

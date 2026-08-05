@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the planned architecture for the Windows-only first milestone. The ASP.NET Core host, static dashboard, health endpoint, and test project are scaffolded; the WebSocket and Windows-integration sections remain design guidance for later phases.
+This document describes the architecture for the Windows-only first milestone. The ASP.NET Core host, static dashboard, health endpoint, version 1 WebSocket protocol, connection handler, and test project are implemented. Foreground-window detection and executable commands remain design guidance for later phases.
 
 ## System shape
 
@@ -66,12 +66,14 @@ This coordination may begin as one small service. It should be split only if imp
 
 ### WebSocket endpoint and protocol
 
-- Accepts WebSocket upgrades at a dedicated endpoint.
+- Accepts WebSocket upgrades at `/ws`.
 - Sends foreground-state events from server to dashboard.
 - Receives command requests from dashboard to server.
 - Returns a result correlated to the request.
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
+
+The implemented version 1 protocol is specified in [protocol.md](protocol.md). Foreground-state publication is the only item in this list not implemented yet.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
