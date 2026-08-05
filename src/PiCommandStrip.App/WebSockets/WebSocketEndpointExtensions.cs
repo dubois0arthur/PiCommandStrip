@@ -9,6 +9,7 @@ public static class WebSocketEndpointExtensions
         services.AddSingleton<ClientMessageParser>();
         services.AddSingleton<ServerMessageFactory>();
         services.AddSingleton<WebSocketMessageReader>();
+        services.AddSingleton<WebSocketConnectionManager>();
         services.AddTransient<WebSocketConnectionHandler>();
 
         return services;
@@ -28,7 +29,17 @@ public static class WebSocketEndpointExtensions
             }
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
+            var connectionManager = context.RequestServices.GetRequiredService<WebSocketConnectionManager>();
             var handler = context.RequestServices.GetRequiredService<WebSocketConnectionHandler>();
-            await handler.HandleAsync(socket, context.RequestAborted);
+            var connection = connectionManager.Add(socket);
+
+            try
+            {
+                await handler.HandleAsync(connection, context.RequestAborted);
+            }
+            finally
+            {
+                connectionManager.Remove(connection.ConnectionId);
+            }
         });
 }

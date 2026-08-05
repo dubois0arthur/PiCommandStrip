@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture for the Windows-only first milestone. The ASP.NET Core host, static dashboard, health endpoint, version 1 WebSocket protocol, connection handler, and test project are implemented. Foreground-window detection and executable commands remain design guidance for later phases.
+This document describes the architecture for the Windows-only first milestone. The ASP.NET Core host, static dashboard, health endpoint, version 1 WebSocket protocol, foreground-window monitoring, change-only broadcasting, connection management, the allowlisted `open_notepad` command, and the test project are implemented.
 
 ## System shape
 
@@ -39,17 +39,17 @@ One process is enough for this milestone. Splitting the parts by responsibility 
 
 ### Foreground-window adapter
 
-- Hides Windows-specific calls behind an interface such as `IForegroundWindowReader`.
+- Hides Windows-specific calls behind `IForegroundWindowProvider`.
 - Uses built-in platform interop to identify the foreground window, its owning process, and its title.
 - Returns a small application model rather than exposing Win32 handles to the rest of the system.
 - Handles windows that disappear, inaccessible processes, empty titles, and transient interop failures without crashing the monitor.
 
-The likely Windows APIs are `GetForegroundWindow`, `GetWindowThreadProcessId`, and `GetWindowText`. C# calls native operating-system functions through **P/Invoke** (Platform Invocation Services). Keeping P/Invoke in one adapter limits platform-specific code and lets tests substitute a fake reader.
+The Windows implementation uses `GetForegroundWindow`, `GetWindowThreadProcessId`, `GetWindowTextLengthW`, and `GetWindowTextW`, followed by `Process.GetProcessById` for the process name. C# calls the native operating-system functions through **P/Invoke** (Platform Invocation Services). Keeping P/Invoke in one adapter limits platform-specific code and lets tests substitute a fake provider. Missing windows, process-exit races, inaccessible process metadata, and non-Windows hosts become an explicit unavailable observation.
 
 ### Foreground monitor
 
 - Runs as an ASP.NET Core hosted background service.
-- Polls the adapter at a modest interval because Windows does not provide this application with a simple managed foreground-change stream.
+- Polls the adapter every 250 milliseconds (approximately four times per second) because Windows does not provide this application with a simple managed foreground-change stream.
 - Publishes only meaningful changes to avoid sending identical state continuously.
 - Accepts the host cancellation token and exits promptly during shutdown.
 
@@ -62,7 +62,7 @@ A **hosted service** is a component whose lifetime ASP.NET Core manages alongsid
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
 
-This coordination may begin as one small service. It should be split only if implementation or tests reveal distinct responsibilities.
+The implementation separates the latest-state store from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
 
 ### WebSocket endpoint and protocol
 
@@ -73,7 +73,7 @@ This coordination may begin as one small service. It should be split only if imp
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 1 protocol is specified in [protocol.md](protocol.md). Foreground-state publication is the only item in this list not implemented yet.
+The implemented version 1 protocol is specified in [protocol.md](protocol.md). Foreground-state publication sends `pc_state` immediately after a compatible `client_hello` and subsequently only when meaningful state changes.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -84,10 +84,11 @@ A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-dup
 - Rejects identifiers that are not in the mapping.
 - Invokes a narrow handler with a cancellation token.
 - Produces a structured success or failure result suitable for display and logging.
+- Applies a two-second cooldown independently to each WebSocket connection.
 
-The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, or arbitrary argument list. Adding a command requires a code change and review on the PC side.
+The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, or arbitrary argument list. The only registered identifier is `open_notepad`. Its handler calls an `INotepadLauncher` that constructs the fixed Notepad location internally and disables shell execution. Adding a command requires a code change and review on the PC side.
 
-An interface such as `ICommandDispatcher` gives protocol tests a fake dispatcher, while individual handlers can remain simple classes or delegates until complexity justifies more structure.
+`IPcCommandDispatcher` and `IPcCommandHandler` provide test seams. Handler failures are caught at the dispatcher boundary and converted to fixed browser-safe text; exception types may be logged, but exception messages and stack traces are not sent to the dashboard.
 
 ### Browser dashboard
 
@@ -143,11 +144,11 @@ The examples are a starting point. During implementation, contracts should be re
 
 ### Foreground state
 
-1. The hosted monitor asks `IForegroundWindowReader` for the current foreground state.
+1. The hosted monitor asks `IForegroundWindowProvider` for the current foreground state every 250 milliseconds.
 2. The Windows adapter calls the required Win32 APIs and maps the result to a small C# value.
 3. The monitor compares the value with the last published state.
-4. When it changes, the coordinator stores it and broadcasts a `foregroundChanged` JSON message.
-5. Dashboard JavaScript parses the message and updates the process and title elements.
+4. When availability, process ID, process name, or title changes, the coordinator retains that observation and broadcasts a `pc_state` JSON message.
+5. Dashboard JavaScript parses the message and updates availability, process name, process ID, title, and time last changed.
 6. A newly connected dashboard receives the stored current value immediately rather than waiting for the next window switch.
 
 ### Command round trip
@@ -166,7 +167,7 @@ The examples are a starting point. During implementation, contracts should be re
 - Log host lifecycle, WebSocket connect/disconnect events, foreground-monitor failures, command IDs, validation rejections, and command outcomes at appropriate levels.
 - Do not log full arbitrary inbound payloads, stack traces to the browser, secrets, or more window-title content than is operationally necessary.
 - Treat malformed client input as a request failure, not a host failure.
-- Treat transient Windows inspection failures as recoverable and continue monitoring after a logged warning.
+- Treat expected Windows inspection races as recoverable, log them at debug level, and continue monitoring.
 - Put sensible bounds on inbound message size and command duration.
 - On host shutdown, stop polling, stop accepting work, cancel active operations, close sockets when practical, and let the ASP.NET Core host exit cleanly.
 

@@ -5,13 +5,19 @@ public sealed record ServerHelloPayload(
     string ProtocolVersion,
     int MaximumMessageSizeBytes);
 
-public sealed record PcStatePayload(string ProcessName, string WindowTitle);
+public sealed record PcStatePayload(
+    bool IsAvailable,
+    string? ProcessName,
+    int? ProcessId,
+    string? WindowTitle,
+    DateTimeOffset ObservedAtUtc);
 
 public sealed record CommandResultPayload(
     Guid RequestMessageId,
     string CommandId,
     bool Succeeded,
-    string Message);
+    string Message,
+    DateTimeOffset CompletedAtUtc);
 
 public sealed record PongPayload(Guid RequestMessageId);
 

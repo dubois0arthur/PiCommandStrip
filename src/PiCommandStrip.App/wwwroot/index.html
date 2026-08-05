@@ -12,6 +12,38 @@
             <p class="eyebrow">Local dashboard</p>
             <h1>Pi Command Strip</h1>
             <p class="intro">The first building block for a context-aware touchscreen command strip.</p>
+
+            <section class="status-card pc-state-card" aria-labelledby="pc-state-heading">
+                <div class="status-row">
+                    <span id="pc-state-indicator" class="status-indicator" aria-hidden="true"></span>
+                    <div>
+                        <h2 id="pc-state-heading">Foreground application</h2>
+                        <p id="pc-state-status" role="status" aria-live="polite">Waiting for PC state&hellip;</p>
+                    </div>
+                    <button id="open-notepad-button" class="command-button" type="button" disabled>
+                        Open Notepad
+                    </button>
+                </div>
+                <dl id="pc-state-details">
+                    <div>
+                        <dt>Process</dt>
+                        <dd id="process-name">&mdash;</dd>
+                    </div>
+                    <div>
+                        <dt>Process ID</dt>
+                        <dd id="process-id">&mdash;</dd>
+                    </div>
+                    <div class="wide-detail">
+                        <dt>Window title</dt>
+                        <dd id="window-title">&mdash;</dd>
+                    </div>
+                    <div class="wide-detail">
+                        <dt>Last changed</dt>
+                        <dd id="pc-state-timestamp">&mdash;</dd>
+                    </div>
+                </dl>
+                <p id="command-result" aria-live="polite">No command sent yet.</p>
+            </section>
         </header>
 
         <div class="status-stack">

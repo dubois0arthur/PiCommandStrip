@@ -112,6 +112,22 @@ public sealed class ClientMessageParserTests
     }
 
     [Fact]
+    public void Parse_CommandPayloadWithExecutablePath_ReturnsInvalidPayloadError()
+    {
+        var json = CreateEnvelope(MessageTypes.CommandRequest, new
+        {
+            commandId = PiCommandStrip.App.PcCommands.PcCommandIds.OpenNotepad,
+            executablePath = @"C:\Windows\System32\notepad.exe"
+        });
+
+        var result = _parser.Parse(json);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("invalid_payload", result.Error?.Code);
+        Assert.Equal(MessageId, result.Error?.RequestMessageId);
+    }
+
+    [Fact]
     public void Parse_NonUtcTimestamp_ReturnsInvalidEnvelopeError()
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(new

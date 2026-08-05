@@ -4,7 +4,7 @@
 
 PiCommandStrip protocol version 1 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, structured errors, and a non-executing response to command requests. `pc_state` is defined for the next foreground-window phase but is not published yet. No PC command is executed in this version.
+This version implements connection greeting, validation, ping/pong, foreground-window state publication, structured errors, and one allowlisted PC command: `open_notepad`.
 
 ## Transport
 
@@ -75,7 +75,7 @@ Requests an application-level pong. Its payload is empty.
 
 ### `command_request`
 
-Carries only a fixed command identifier. It never contains a shell command, executable path, script, arguments, or executable object.
+Carries only a fixed command identifier. It never contains a shell command, executable path, script, arguments, or executable object. The payload must contain exactly one property named `commandId`; additional properties are rejected.
 
 ```json
 {
@@ -83,12 +83,12 @@ Carries only a fixed command identifier. It never contains a shell command, exec
   "messageId": "a227745c-5d58-4859-92fb-b5586c685b13",
   "timestampUtc": "2026-08-05T12:00:02.000Z",
   "payload": {
-    "commandId": "demo.safe-command"
+    "commandId": "open_notepad"
   }
 }
 ```
 
-`commandId` is required, non-blank, and at most 100 characters. In this protocol-only milestone every valid request receives a failed `command_result` stating that commands are unavailable. A later milestone will resolve identifiers through an explicit server-owned allowlist.
+`commandId` is required, non-blank, and at most 100 characters. `open_notepad` is the only allowlisted value. It maps internally to a dedicated handler with no command parameters. Unknown identifiers execute nothing and receive a failed `command_result`. A connection may attempt one command every two seconds; faster attempts receive a rate-limit result.
 
 ## Server-to-client messages
 
@@ -135,16 +135,19 @@ Reports the outcome of a `command_request`. The result has its own `messageId`; 
   "timestampUtc": "2026-08-05T12:00:02.0100000+00:00",
   "payload": {
     "requestMessageId": "a227745c-5d58-4859-92fb-b5586c685b13",
-    "commandId": "demo.safe-command",
-    "succeeded": false,
-    "message": "PC commands are not available in this protocol-only milestone."
+    "commandId": "open_notepad",
+    "succeeded": true,
+    "message": "Notepad opened.",
+    "completedAtUtc": "2026-08-05T12:00:02.0090000+00:00"
   }
 }
 ```
 
+`message` is safe display text selected by the server. Exceptions, stack traces, executable paths, and other local details are never copied into it. `completedAtUtc` is the server time at which dispatch completed or rejection was decided.
+
 ### `pc_state`
 
-Reserved for foreground-window state. The contract is defined now but messages are not emitted until Windows state detection exists.
+Reports the latest foreground-window observation. The server sends it immediately after accepting a compatible `client_hello`, then only when availability, process ID, process name, or window title changes. A newer polling timestamp alone does not cause a message.
 
 ```json
 {
@@ -152,11 +155,16 @@ Reserved for foreground-window state. The contract is defined now but messages a
   "messageId": "c3da68ce-54ec-46d6-94d2-cb597fca00d4",
   "timestampUtc": "2026-08-05T12:00:03.0000000+00:00",
   "payload": {
+    "isAvailable": true,
     "processName": "notepad",
-    "windowTitle": "Notes.txt - Notepad"
+    "processId": 4280,
+    "windowTitle": "Notes.txt - Notepad",
+    "observedAtUtc": "2026-08-05T12:00:02.9500000+00:00"
   }
 }
 ```
+
+`observedAtUtc` is when the server observed the meaningful change and is displayed as “last changed.” If no usable foreground window exists, `isAvailable` is `false`; `processName`, `processId`, and `windowTitle` are `null`. Expected causes include no foreground HWND, a process exiting during inspection, inaccessible process information, or running the host on a non-Windows platform.
 
 ### `error`
 
@@ -191,15 +199,19 @@ Malformed, invalid, unknown, binary, and oversized messages receive an error whe
 
 The server does not ask `System.Text.Json` to create an arbitrary polymorphic object from the browser payload. It first parses a bounded message into a `JsonDocument`, validates the common fields, explicitly switches on the allowlisted client message type, validates that payload, and constructs a specific data-only C# record.
 
-The connection handler then switches over those known records. A `command_request` is only a `CommandRequestMessage` containing a string identifier. It is not an executable command and cannot launch a process. This separation must remain in place when the command allowlist is added.
+The connection handler then switches over those known records. A `command_request` is only a `CommandRequestMessage` containing a bounded identifier. `PcCommandDispatcher` resolves that identifier through its server-created dictionary of `IPcCommandHandler` instances. The only registered handler is `OpenNotepadCommandHandler`; it accepts no payload values and calls a Notepad-specific launcher. The browser never supplies the executable path.
+
+The Notepad launcher combines the server's trusted Windows system directory with the fixed filename `notepad.exe` and calls `Process.Start` with `UseShellExecute` disabled. Unknown identifiers, extra command payload fields, and attempts during the per-connection cooldown are rejected before process launch.
 
 ## Connection lifecycle
 
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` and may then send `ping` or `command_request` messages.
-5. The server reads complete messages, validates them, and dispatches only recognized typed records.
-6. Either peer may initiate the normal WebSocket close handshake.
-7. Application shutdown cancels active receive operations and attempts a bounded close before releasing the socket.
-8. The browser reconnects after two seconds unless its page is unloading.
+4. The dashboard sends `client_hello`.
+5. After validating protocol compatibility, the server marks the connection ready and sends the retained current `pc_state`.
+6. The dashboard may send `ping` or `command_request` messages, while meaningful foreground changes are broadcast independently.
+7. The server reads complete messages, validates them, and dispatches only recognized typed records.
+8. Either peer may initiate the normal WebSocket close handshake.
+9. Application shutdown cancels active receive and polling operations and attempts a bounded close before releasing each socket.
+10. The browser reconnects after two seconds unless its page is unloading.

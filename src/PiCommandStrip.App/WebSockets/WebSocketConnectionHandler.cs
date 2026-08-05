@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
-using System.Text.Json;
+using PiCommandStrip.App.ForegroundWindows;
+using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
 
 namespace PiCommandStrip.App.WebSockets;
@@ -8,11 +9,17 @@ public sealed class WebSocketConnectionHandler(
     ClientMessageParser parser,
     ServerMessageFactory messageFactory,
     WebSocketMessageReader messageReader,
+    ForegroundStateStore foregroundStateStore,
+    IPcCommandDispatcher commandDispatcher,
+    TimeProvider timeProvider,
     IHostApplicationLifetime applicationLifetime,
     ILogger<WebSocketConnectionHandler> logger)
 {
-    public async Task HandleAsync(WebSocket socket, CancellationToken requestCancellationToken)
+    public async Task HandleAsync(
+        WebSocketClientConnection connection,
+        CancellationToken requestCancellationToken)
     {
+        var socket = connection.Socket;
         using var connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             requestCancellationToken,
             applicationLifetime.ApplicationStopping);
@@ -22,8 +29,7 @@ public sealed class WebSocketConnectionHandler(
 
         try
         {
-            await SendAsync(
-                socket,
+            await connection.SendAsync(
                 messageFactory.Create(
                     MessageTypes.ServerHello,
                     new ServerHelloPayload(
@@ -45,7 +51,7 @@ public sealed class WebSocketConnectionHandler(
                 if (received.Kind is ReceivedMessageKind.TooLarge)
                 {
                     await SendErrorAsync(
-                        socket,
+                        connection,
                         null,
                         "message_too_large",
                         $"Messages must not exceed {ProtocolConstants.MaximumMessageSizeBytes} bytes.",
@@ -56,7 +62,7 @@ public sealed class WebSocketConnectionHandler(
                 if (received.Kind is ReceivedMessageKind.UnsupportedData)
                 {
                     await SendErrorAsync(
-                        socket,
+                        connection,
                         null,
                         "unsupported_data",
                         "Only UTF-8 JSON text messages are supported.",
@@ -69,7 +75,7 @@ public sealed class WebSocketConnectionHandler(
                 {
                     var error = parseResult.Error!;
                     await SendErrorAsync(
-                        socket,
+                        connection,
                         error.RequestMessageId,
                         error.Code,
                         error.Message,
@@ -77,7 +83,7 @@ public sealed class WebSocketConnectionHandler(
                     continue;
                 }
 
-                await DispatchAsync(socket, parseResult.Message!, cancellationToken);
+                await DispatchAsync(connection, parseResult.Message!, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -96,7 +102,7 @@ public sealed class WebSocketConnectionHandler(
     }
 
     private async Task DispatchAsync(
-        WebSocket socket,
+        WebSocketClientConnection connection,
         ClientMessage message,
         CancellationToken cancellationToken)
     {
@@ -106,7 +112,7 @@ public sealed class WebSocketConnectionHandler(
                 if (clientHello.Payload.ProtocolVersion != ProtocolConstants.Version)
                 {
                     await SendErrorAsync(
-                        socket,
+                        connection,
                         clientHello.MessageId,
                         "unsupported_protocol_version",
                         $"Protocol version '{clientHello.Payload.ProtocolVersion}' is not supported.",
@@ -115,29 +121,20 @@ public sealed class WebSocketConnectionHandler(
                 }
 
                 logger.LogInformation("WebSocket client identified as {ClientName}", clientHello.Payload.ClientName);
+                await connection.InitializePcStateAsync(
+                    foregroundStateStore,
+                    messageFactory,
+                    cancellationToken);
                 return;
 
             case PingMessage ping:
-                await SendAsync(
-                    socket,
+                await connection.SendAsync(
                     messageFactory.Create(MessageTypes.Pong, new PongPayload(ping.MessageId)),
                     cancellationToken);
                 return;
 
             case CommandRequestMessage commandRequest:
-                logger.LogInformation(
-                    "Command {CommandId} requested but command execution is not implemented",
-                    commandRequest.Payload.CommandId);
-                await SendAsync(
-                    socket,
-                    messageFactory.Create(
-                        MessageTypes.CommandResult,
-                        new CommandResultPayload(
-                            commandRequest.MessageId,
-                            commandRequest.Payload.CommandId,
-                            false,
-                            "PC commands are not available in this protocol-only milestone.")),
-                    cancellationToken);
+                await HandleCommandRequestAsync(connection, commandRequest, cancellationToken);
                 return;
 
             default:
@@ -145,27 +142,50 @@ public sealed class WebSocketConnectionHandler(
         }
     }
 
+    private async Task HandleCommandRequestAsync(
+        WebSocketClientConnection connection,
+        CommandRequestMessage commandRequest,
+        CancellationToken cancellationToken)
+    {
+        PcCommandExecutionResult result;
+
+        if (!connection.CommandCooldown.TryAcquire(out _))
+        {
+            logger.LogInformation(
+                "PC command request rate limited for connection {ConnectionId}",
+                connection.ConnectionId);
+            result = PcCommandExecutionResult.Failure("Please wait before sending another command.");
+        }
+        else
+        {
+            result = await commandDispatcher.DispatchAsync(
+                commandRequest.Payload.CommandId,
+                cancellationToken);
+        }
+
+        await connection.SendAsync(
+            messageFactory.Create(
+                MessageTypes.CommandResult,
+                new CommandResultPayload(
+                    commandRequest.MessageId,
+                    commandRequest.Payload.CommandId,
+                    result.Succeeded,
+                    result.Message,
+                    timeProvider.GetUtcNow())),
+            cancellationToken);
+    }
+
     private Task SendErrorAsync(
-        WebSocket socket,
+        WebSocketClientConnection connection,
         Guid? requestMessageId,
         string code,
         string message,
         CancellationToken cancellationToken) =>
-        SendAsync(
-            socket,
+        connection.SendAsync(
             messageFactory.Create(
                 MessageTypes.Error,
                 new ErrorPayload(requestMessageId, code, message)),
             cancellationToken);
-
-    private static async Task SendAsync<TPayload>(
-        WebSocket socket,
-        ProtocolEnvelope<TPayload> message,
-        CancellationToken cancellationToken)
-    {
-        var json = JsonSerializer.SerializeToUtf8Bytes(message, ProtocolJson.SerializerOptions);
-        await socket.SendAsync(json, WebSocketMessageType.Text, true, cancellationToken);
-    }
 
     private static async Task CompleteClientCloseAsync(
         WebSocket socket,

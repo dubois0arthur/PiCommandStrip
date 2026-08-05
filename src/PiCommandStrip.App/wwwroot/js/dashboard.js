@@ -9,9 +9,19 @@ const websocketStatus = document.querySelector("#websocket-status");
 const pingButton = document.querySelector("#ping-button");
 const pingResult = document.querySelector("#ping-result");
 
+const pcStateIndicator = document.querySelector("#pc-state-indicator");
+const pcStateStatus = document.querySelector("#pc-state-status");
+const processName = document.querySelector("#process-name");
+const processId = document.querySelector("#process-id");
+const windowTitle = document.querySelector("#window-title");
+const pcStateTimestamp = document.querySelector("#pc-state-timestamp");
+const openNotepadButton = document.querySelector("#open-notepad-button");
+const commandResult = document.querySelector("#command-result");
+
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
 const pendingPings = new Map();
+const pendingCommands = new Set();
 
 let socket;
 let reconnectTimer;
@@ -75,6 +85,39 @@ function handlePong(message) {
     pingResult.textContent = `Pong received in ${roundTripMilliseconds.toFixed(1)} ms.`;
 }
 
+function renderPcState(state) {
+    pcStateIndicator.className = "status-indicator";
+
+    if (state.isAvailable) {
+        pcStateIndicator.classList.add("is-healthy");
+        pcStateStatus.textContent = "Foreground application detected";
+        processName.textContent = state.processName;
+        processId.textContent = state.processId;
+        windowTitle.textContent = state.windowTitle || "No window title";
+    } else {
+        pcStateIndicator.classList.add("is-unavailable");
+        pcStateStatus.textContent = "No usable foreground window";
+        processName.textContent = "—";
+        processId.textContent = "—";
+        windowTitle.textContent = "—";
+    }
+
+    pcStateTimestamp.textContent = new Date(state.observedAtUtc).toLocaleString();
+}
+
+function handleCommandResult(message) {
+    if (message.payload?.commandId !== "open_notepad") {
+        return;
+    }
+
+    pendingCommands.delete(message.payload.requestMessageId);
+    openNotepadButton.disabled = !socket || socket.readyState !== WebSocket.OPEN;
+    commandResult.className = message.payload.succeeded ? "is-success" : "is-failure";
+
+    const completedAt = new Date(message.payload.completedAtUtc).toLocaleTimeString();
+    commandResult.textContent = `${message.payload.message} (${completedAt})`;
+}
+
 function handleServerMessage(event) {
     try {
         const message = JSON.parse(event.data);
@@ -87,7 +130,10 @@ function handleServerMessage(event) {
                 handlePong(message);
                 break;
             case "pc_state":
+                renderPcState(message.payload);
+                break;
             case "command_result":
+                handleCommandResult(message);
                 break;
             case "error":
                 websocketStatus.textContent = `Server error: ${message.payload.message}`;
@@ -111,6 +157,7 @@ function connectWebSocket() {
     connectionHadError = false;
     setWebSocketStatus("connecting", "Connecting");
     pingButton.disabled = true;
+    openNotepadButton.disabled = true;
 
     const webSocketScheme = window.location.protocol === "https:" ? "wss" : "ws";
 
@@ -126,6 +173,7 @@ function connectWebSocket() {
     socket.addEventListener("open", () => {
         setWebSocketStatus("connected", "Connected");
         pingButton.disabled = false;
+        openNotepadButton.disabled = false;
         sendClientHello();
     });
 
@@ -138,9 +186,17 @@ function connectWebSocket() {
 
     socket.addEventListener("close", () => {
         pingButton.disabled = true;
+        openNotepadButton.disabled = true;
         pendingPings.forEach(ping => clearTimeout(ping.timeout));
         pendingPings.clear();
+        const commandWasPending = pendingCommands.size > 0;
+        pendingCommands.clear();
         pingResult.textContent = "No ping pending.";
+
+        if (commandWasPending) {
+            commandResult.className = "is-failure";
+            commandResult.textContent = "Disconnected before the command completed.";
+        }
 
         if (connectionHadError) {
             setWebSocketStatus("error", "Error: disconnected; retrying in 2 seconds");
@@ -170,6 +226,21 @@ pingButton.addEventListener("click", () => {
 
     pingResult.textContent = "Waiting for pong...";
     socket.send(JSON.stringify(createEnvelope("ping", messageId, {})));
+});
+
+openNotepadButton.addEventListener("click", () => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return;
+    }
+
+    const messageId = createMessageId();
+    pendingCommands.add(messageId);
+    openNotepadButton.disabled = true;
+    commandResult.className = "";
+    commandResult.textContent = "Opening Notepad...";
+    socket.send(JSON.stringify(createEnvelope("command_request", messageId, {
+        commandId: "open_notepad"
+    })));
 });
 
 window.addEventListener("beforeunload", () => {

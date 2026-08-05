@@ -7,9 +7,11 @@ The initial scaffold provides:
 - a local HTML, CSS, and JavaScript dashboard;
 - an ASP.NET Core health endpoint at `/health`; and
 - a native WebSocket endpoint at `/ws` with a versioned JSON protocol, reconnecting browser client, and ping/pong measurement; and
+- Windows foreground-application detection with change-only `pc_state` broadcasts; and
+- a server-allowlisted `open_notepad` command with a per-connection cooldown; and
 - an xUnit project for automated tests.
 
-Foreground-window detection and executable PC commands are intentionally not implemented yet. See [the product vision](docs/vision.md), [the initial architecture](docs/architecture.md), and [the WebSocket protocol](docs/protocol.md) for details.
+`open_notepad` is the only executable PC command. Browser input cannot select a path, shell, script, arguments, or another executable. See [the product vision](docs/vision.md), [the initial architecture](docs/architecture.md), and [the WebSocket protocol](docs/protocol.md) for details.
 
 ## Prerequisites
 
@@ -23,6 +25,10 @@ The test project uses these development-only NuGet packages:
 - `Microsoft.NET.Test.Sdk` hosts test discovery and execution for `dotnet test`.
 - `xunit` provides the test framework and assertions.
 - `xunit.runner.visualstudio` connects xUnit to the .NET and Visual Studio test platform.
+
+## Available command
+
+The dashboard's **Open Notepad** button sends the fixed identifier `open_notepad`. The server maps that identifier to a dedicated handler which starts Windows Notepad from the Windows system directory with shell execution disabled. The request accepts no path or arguments. Unknown command identifiers are rejected, and each WebSocket connection may attempt a command only once every two seconds.
 
 ## Development commands
 

@@ -96,6 +96,14 @@ public sealed class ClientMessageParser
         DateTimeOffset timestampUtc,
         JsonElement payload)
     {
+        if (!HasExactlyOneProperty(payload, "commandId"))
+        {
+            return ProtocolParseResult.Failure(
+                "invalid_payload",
+                "The command payload may contain only 'commandId'.",
+                messageId);
+        }
+
         if (!TryGetRequiredString(payload, "commandId", out var commandId) ||
             commandId.Length > MaximumCommandIdLength)
         {
@@ -109,6 +117,23 @@ public sealed class ClientMessageParser
             messageId,
             timestampUtc,
             new CommandRequestPayload(commandId)));
+    }
+
+    private static bool HasExactlyOneProperty(JsonElement parent, string expectedName)
+    {
+        var propertyCount = 0;
+
+        foreach (var property in parent.EnumerateObject())
+        {
+            propertyCount++;
+
+            if (!property.NameEquals(expectedName))
+            {
+                return false;
+            }
+        }
+
+        return propertyCount == 1;
     }
 
     private static bool TryGetRequiredString(JsonElement parent, string name, out string value)
