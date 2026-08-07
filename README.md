@@ -1,74 +1,72 @@
 # PiCommandStrip
 
-PiCommandStrip is a context-aware touchscreen command strip for a Windows PC. The eventual dashboard will run on a Raspberry Pi, but the current milestone runs the dashboard and ASP.NET Core server together on Windows.
+PiCommandStrip is a context-aware touchscreen command strip. The ASP.NET Core host runs on a Windows PC, observes the foreground application, serves the dashboard, and executes a deliberately small allowlist of commands. The dashboard can run locally or, when LAN mode is explicitly enabled, in a Raspberry Pi browser.
 
-The initial scaffold provides:
+Implemented features include:
 
-- a local HTML, CSS, and JavaScript dashboard;
-- an ASP.NET Core health endpoint at `/health`; and
-- a native WebSocket endpoint at `/ws` with a versioned JSON protocol, reconnecting browser client, and ping/pong measurement; and
-- Windows foreground-application detection with change-only `pc_state` broadcasts; and
-- a server-allowlisted `open_notepad` command with a per-connection cooldown; and
-- an xUnit project for automated tests.
+- repository-local HTML, CSS, and JavaScript dashboard;
+- `/health` HTTP endpoint and authenticated `/ws` native WebSocket endpoint;
+- Windows foreground-application detection with change-only broadcasts;
+- server-allowlisted `open_notepad` command with a per-connection cooldown;
+- loopback-only development configuration and explicit LAN configuration; and
+- focused xUnit tests for protocol, authentication, commands, and state changes.
 
-`open_notepad` is the only executable PC command. Browser input cannot select a path, shell, script, arguments, or another executable. See [the product vision](docs/vision.md), [the initial architecture](docs/architecture.md), and [the WebSocket protocol](docs/protocol.md) for details.
+Browser input cannot select a path, shell, script, arguments, or executable. LAN mode is intended only for a trusted Private network and currently uses unencrypted HTTP/WebSocket traffic.
 
 ## Prerequisites
 
 - .NET SDK `10.0.302`, pinned by `global.json`
-- A Windows development environment
+- Windows for foreground detection and Notepad execution
 
-No Node.js, npm, frontend packages, or application NuGet packages are required.
+No Node.js, npm, frontend packages, or application NuGet packages are required. The test-only packages are `Microsoft.NET.Test.Sdk`, `xunit`, and `xunit.runner.visualstudio`.
 
-The test project uses these development-only NuGet packages:
+## Generate the pre-shared token
 
-- `Microsoft.NET.Test.Sdk` hosts test discovery and execution for `dotnet test`.
-- `xunit` provides the test framework and assertions.
-- `xunit.runner.visualstudio` connects xUnit to the .NET and Visual Studio test platform.
+Run these commands from the repository root in PowerShell:
 
-## Available command
+```powershell
+$token = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+$token
+dotnet user-secrets set "PiCommandStrip:Authentication:Token" "$token" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+```
 
-The dashboard's **Open Notepad** button sends the fixed identifier `open_notepad`. The server maps that identifier to a dedicated handler which starts Windows Notepad from the Windows system directory with shell execution disabled. The request accepts no path or arguments. Unknown command identifiers are rejected, and each WebSocket connection may attempt a command only once every two seconds.
+Copy the displayed token to a password manager for entry on the Raspberry Pi. User Secrets are stored outside this repository and are loaded by the Development environment. Never add the token to `appsettings*.json`, JavaScript, documentation, or Git.
 
-## Development commands
-
-Run these commands from the repository root.
-
-Restore dependencies:
+## Build and test
 
 ```powershell
 dotnet restore PiCommandStrip.sln
-```
-
-Build the complete solution:
-
-```powershell
 dotnet build PiCommandStrip.sln --no-restore
-```
-
-Run every automated test:
-
-```powershell
 dotnet test PiCommandStrip.sln --no-build
 ```
 
-Start the application on a predictable local address:
+## Run locally on the Windows PC
+
+Development mode explicitly binds only to `127.0.0.1:5077`:
 
 ```powershell
-dotnet run --project src/PiCommandStrip.App/PiCommandStrip.App.csproj --no-build -- --urls http://localhost:5077
+dotnet run --project src/PiCommandStrip.App/PiCommandStrip.App.csproj --no-build --launch-profile http
 ```
 
-Open `http://localhost:5077` in a browser. The dashboard calls `http://localhost:5077/health`, connects to `ws://localhost:5077/ws`, and enables its Ping button automatically. Press `Ctrl+C` in the terminal to stop Kestrel gracefully.
+Open `http://localhost:5077`, enter the token, and press **Connect**. The page connects to `/ws` on the same origin. Press `Ctrl+C` to stop Kestrel gracefully.
+
+## Run for a Raspberry Pi client
+
+Follow [the LAN setup guide](docs/lan-setup.md). LAN mode is not selected by `launchSettings.json`; it requires the `Lan` environment, a concrete PC address, and the token supplied outside Git.
+
+## Available command
+
+The dashboard sends only the fixed identifier `open_notepad`. The server maps it to a dedicated handler that starts Notepad from the Windows system directory with shell execution disabled and no arguments. Unknown identifiers execute nothing.
 
 ## Project layout
 
 ```text
 PiCommandStrip.sln
 src/
-  PiCommandStrip.App/       ASP.NET Core host and local dashboard
+  PiCommandStrip.App/       ASP.NET Core Windows host and dashboard
 tests/
-  PiCommandStrip.Tests/     Unit tests for application logic
-docs/                       Product and architecture documentation
+  PiCommandStrip.Tests/     Focused automated tests
+docs/                       Vision, architecture, protocol, and LAN setup
 AGENTS.md                   Persistent contributor instructions
 global.json                 Pinned .NET SDK selection
 ```

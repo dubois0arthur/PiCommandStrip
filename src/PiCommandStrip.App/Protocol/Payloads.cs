@@ -23,7 +23,10 @@ public sealed record PongPayload(Guid RequestMessageId);
 
 public sealed record ErrorPayload(Guid? RequestMessageId, string Code, string Message);
 
-public sealed record ClientHelloPayload(string ClientName, string ProtocolVersion);
+public sealed record ClientHelloPayload(
+    string ClientName,
+    string ProtocolVersion,
+    string? AuthenticationToken);
 
 public sealed record CommandRequestPayload(string CommandId);
 

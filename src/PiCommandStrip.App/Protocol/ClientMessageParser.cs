@@ -6,6 +6,7 @@ public sealed class ClientMessageParser
 {
     private const int MaximumClientNameLength = 100;
     private const int MaximumCommandIdLength = 100;
+    private const int MaximumAuthenticationTokenLength = 200;
 
     public ProtocolParseResult Parse(ReadOnlyMemory<byte> utf8Json)
     {
@@ -85,10 +86,38 @@ public sealed class ClientMessageParser
                 messageId);
         }
 
+        string? authenticationToken = null;
+        if (payload.TryGetProperty("authenticationToken", out var authenticationProperty))
+        {
+            if (authenticationProperty.ValueKind is JsonValueKind.Null)
+            {
+                authenticationToken = null;
+            }
+            else if (authenticationProperty.ValueKind is not JsonValueKind.String)
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    "'authenticationToken' must be a string when provided.",
+                    messageId);
+            }
+
+            else
+            {
+                authenticationToken = authenticationProperty.GetString();
+            }
+            if (authenticationToken?.Length > MaximumAuthenticationTokenLength)
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'authenticationToken' must not exceed {MaximumAuthenticationTokenLength} characters.",
+                    messageId);
+            }
+        }
+
         return ProtocolParseResult.Success(new ClientHelloMessage(
             messageId,
             timestampUtc,
-            new ClientHelloPayload(clientName, protocolVersion)));
+            new ClientHelloPayload(clientName, protocolVersion, authenticationToken)));
     }
 
     private static ProtocolParseResult ParseCommandRequest(

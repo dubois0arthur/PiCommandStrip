@@ -23,34 +23,52 @@ function createEnvelope(type, messageId, payload) {
     };
 }
 
+const terminalAuthenticationErrors = new Set([
+    "authentication_missing",
+    "authentication_failed",
+    "authentication_rate_limited"
+]);
+
 export class DashboardSocket {
+    #authenticated = false;
     #callbacks;
     #connectionHadError = false;
     #pendingPings = new Map();
     #reconnectTimer;
     #socket;
-    #stopped = false;
+    #stopped = true;
+    #token;
 
     constructor(callbacks) {
         this.#callbacks = callbacks;
     }
 
     get isConnected() {
-        return this.#socket?.readyState === WebSocket.OPEN;
+        return this.#authenticated && this.#socket?.readyState === WebSocket.OPEN;
     }
 
-    connect() {
+    connect(token) {
+        if (!token) {
+            this.#callbacks.onAuthenticationRequired?.("Enter the pre-shared token.");
+            return;
+        }
+
+        this.disconnect();
+        this.#token = token;
         this.#stopped = false;
         this.#openConnection();
     }
 
     disconnect() {
         this.#stopped = true;
+        this.#authenticated = false;
         clearTimeout(this.#reconnectTimer);
         this.#clearPendingPings();
 
-        if (this.#socket?.readyState === WebSocket.OPEN) {
-            this.#socket.close(1000, "Dashboard closing.");
+        const socket = this.#socket;
+        this.#socket = undefined;
+        if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) {
+            socket.close(1000, "Dashboard closing.");
         }
     }
 
@@ -86,6 +104,11 @@ export class DashboardSocket {
     }
 
     #openConnection() {
+        if (this.#stopped) {
+            return;
+        }
+
+        this.#authenticated = false;
         this.#connectionHadError = false;
         this.#callbacks.onStatusChange?.("connecting", "Connecting");
 
@@ -103,18 +126,20 @@ export class DashboardSocket {
         }
 
         socket.addEventListener("open", () => {
-            if (this.#socket !== socket) {
+            if (this.#socket !== socket || this.#stopped) {
+                socket.close(1000, "Dashboard connection stopped.");
                 return;
             }
 
-            this.#callbacks.onStatusChange?.("connected", "Connected");
-            this.#send("client_hello", createMessageId(), {
-                clientName: "browser-dashboard",
-                protocolVersion: "1"
-            });
+            this.#callbacks.onStatusChange?.("connecting", "Authenticating");
+            this.#callbacks.onAuthenticating?.();
         });
 
-        socket.addEventListener("message", event => this.#handleMessage(event));
+        socket.addEventListener("message", event => {
+            if (this.#socket === socket) {
+                this.#handleMessage(event);
+            }
+        });
 
         socket.addEventListener("error", () => {
             if (this.#socket !== socket) {
@@ -130,10 +155,15 @@ export class DashboardSocket {
                 return;
             }
 
+            this.#authenticated = false;
             this.#clearPendingPings();
             this.#socket = undefined;
             const state = this.#connectionHadError ? "error" : "disconnected";
-            const text = this.#connectionHadError ? "Connection error — retrying" : "Disconnected — retrying";
+            const text = this.#stopped
+                ? "Authentication required"
+                : this.#connectionHadError
+                    ? "Connection error - retrying"
+                    : "Disconnected - retrying";
             this.#callbacks.onStatusChange?.(state, text);
             this.#callbacks.onDisconnected?.();
             this.#scheduleReconnect();
@@ -146,9 +176,19 @@ export class DashboardSocket {
 
             switch (message.type) {
                 case "server_hello":
+                    this.#send("client_hello", createMessageId(), {
+                        clientName: "browser-dashboard",
+                        protocolVersion: "2",
+                        authenticationToken: this.#token
+                    });
                     this.#callbacks.onServerHello?.(message.payload);
                     break;
                 case "pc_state":
+                    if (!this.#authenticated) {
+                        this.#authenticated = true;
+                        this.#callbacks.onStatusChange?.("connected", "Authenticated");
+                        this.#callbacks.onAuthenticated?.();
+                    }
                     this.#callbacks.onPcState?.(message.payload);
                     break;
                 case "pong":
@@ -158,7 +198,7 @@ export class DashboardSocket {
                     this.#callbacks.onCommandResult?.(message.payload);
                     break;
                 case "error":
-                    this.#callbacks.onServerError?.(message.payload);
+                    this.#handleServerError(message.payload);
                     break;
                 default:
                     this.#callbacks.onProtocolError?.(`Unknown server message type: ${message.type}`);
@@ -166,6 +206,22 @@ export class DashboardSocket {
             }
         } catch (error) {
             this.#callbacks.onProtocolError?.("Could not process a server message.", error);
+        }
+    }
+
+    #handleServerError(error) {
+        this.#callbacks.onServerError?.(error);
+
+        if (error?.code === "authentication_expired") {
+            this.#socket?.close(4001, "Authentication attempt expired.");
+            return;
+        }
+
+        if (terminalAuthenticationErrors.has(error?.code)) {
+            this.#stopped = true;
+            this.#token = undefined;
+            this.#callbacks.onAuthenticationRequired?.(error.message);
+            this.#socket?.close(4003, "Authentication failed.");
         }
     }
 

@@ -2,7 +2,7 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 1 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 2 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
 This version implements connection greeting, validation, ping/pong, foreground-window state publication, structured errors, and one allowlisted PC command: `open_notepad`.
 
@@ -13,7 +13,7 @@ This version implements connection greeting, validation, ping/pong, foreground-w
 - A logical JSON message may use multiple WebSocket frames.
 - The maximum accepted client message size is 16 KiB (16,384 bytes), measured after all frames are combined.
 - The server and browser both support a normal WebSocket close handshake.
-- The browser reconnects two seconds after a disconnect or connection failure.
+- The browser reconnects two seconds after a transport failure, but stops retrying after a terminal authentication failure so it does not hammer the server.
 
 WebSocket control-frame keepalives and the application-level `ping` message solve different problems. Kestrel's keepalive helps maintain the transport. The JSON `ping`/`pong` pair verifies the application protocol and allows the dashboard to measure round-trip time.
 
@@ -37,7 +37,7 @@ Every client and server message has exactly the same top-level shape:
 | `timestampUtc` | ISO 8601 timestamp with a zero UTC offset | Records when the sender created the message. It is diagnostic metadata, not trusted for elapsed-time measurement. |
 | `payload` | JSON object | Contains only fields defined for the selected message type. An empty payload is still `{}`. |
 
-The current parser requires exact camel-case property names. Incoming timestamps and IDs are validated, but browser timestamps are not treated as trusted clock values.
+The current parser requires exact camel-case property names. Incoming timestamps and IDs are validated. The `client_hello` timestamp must be within one minute of server UTC time to reject expired authentication attempts; other browser timestamps are diagnostic only.
 
 ## Client-to-server messages
 
@@ -52,13 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "1"
+    "protocolVersion": "2",
+    "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `1`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `2`.
+- `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
+
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 2 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -103,7 +107,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "1",
+    "protocolVersion": "2",
     "maximumMessageSizeBytes": 16384
   }
 }
@@ -192,6 +196,12 @@ Current error codes are:
 - `unsupported_protocol_version`
 - `unsupported_data`
 - `message_too_large`
+- `authentication_missing`
+- `authentication_failed`
+- `authentication_expired`
+- `authentication_rate_limited`
+- `authentication_required`
+- `already_authenticated`
 
 Malformed, invalid, unknown, binary, and oversized messages receive an error when the connection is still writable. They do not crash the application, and recoverable errors do not automatically close the connection.
 
@@ -199,7 +209,9 @@ Malformed, invalid, unknown, binary, and oversized messages receive an error whe
 
 The server does not ask `System.Text.Json` to create an arbitrary polymorphic object from the browser payload. It first parses a bounded message into a `JsonDocument`, validates the common fields, explicitly switches on the allowlisted client message type, validates that payload, and constructs a specific data-only C# record.
 
-The connection handler then switches over those known records. A `command_request` is only a `CommandRequestMessage` containing a bounded identifier. `PcCommandDispatcher` resolves that identifier through its server-created dictionary of `IPcCommandHandler` instances. The only registered handler is `OpenNotepadCommandHandler`; it accepts no payload values and calls a Notepad-specific launcher. The browser never supplies the executable path.
+The connection handler then switches over those known records. Before it accepts `ping` or `command_request`, a version-compatible `client_hello` must pass constant-time pre-shared-token comparison and timestamp freshness validation. A process-wide limiter permits at most five authentication attempts per 30-second window and resets after success. The token is never included in logs.
+
+A `command_request` is only a `CommandRequestMessage` containing a bounded identifier. `PcCommandDispatcher` resolves that identifier through its server-created dictionary of `IPcCommandHandler` instances. The only registered handler is `OpenNotepadCommandHandler`; it accepts no payload values and calls a Notepad-specific launcher. The browser never supplies the executable path.
 
 The Notepad launcher combines the server's trusted Windows system directory with the fixed filename `notepad.exe` and calls `Process.Start` with `UseShellExecute` disabled. Unknown identifiers, extra command payload fields, and attempts during the per-connection cooldown are rejected before process launch.
 
@@ -208,10 +220,11 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello`.
-5. After validating protocol compatibility, the server marks the connection ready and sends the retained current `pc_state`.
-6. The dashboard may send `ping` or `command_request` messages, while meaningful foreground changes are broadcast independently.
-7. The server reads complete messages, validates them, and dispatches only recognized typed records.
-8. Either peer may initiate the normal WebSocket close handshake.
-9. Application shutdown cancels active receive and polling operations and attempts a bounded close before releasing each socket.
-10. The browser reconnects after two seconds unless its page is unloading.
+4. The dashboard sends `client_hello` with protocol version 2, its fresh UTC timestamp, and the configured token.
+5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
+6. Only after successful authentication does the server mark the connection ready and send the retained current `pc_state`.
+7. The authenticated dashboard may send `ping` or `command_request` messages, while meaningful foreground changes are broadcast independently.
+8. The server reads complete messages, validates them, and dispatches only recognized typed records.
+9. Either peer may initiate the normal WebSocket close handshake.
+10. Application shutdown cancels active receive and polling operations and attempts a bounded close before releasing each socket.
+11. The browser reconnects after transport failures unless its page is unloading or authentication requires user action.

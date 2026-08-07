@@ -1,0 +1,302 @@
+using System.Net.WebSockets;
+using System.Text.Json;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using PiCommandStrip.App.Authentication;
+using PiCommandStrip.App.ForegroundWindows;
+using PiCommandStrip.App.PcCommands;
+using PiCommandStrip.App.Protocol;
+using PiCommandStrip.App.WebSockets;
+
+namespace PiCommandStrip.Tests.WebSockets;
+
+public sealed class WebSocketAuthenticationTests
+{
+    private static readonly DateTimeOffset CurrentTime =
+        new(2026, 8, 7, 12, 0, 0, TimeSpan.Zero);
+    private static readonly string ValidToken = Convert.ToBase64String(
+        Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+
+    [Fact]
+    public async Task ClientHello_WithValidToken_AuthenticatesAndReceivesPcState()
+    {
+        var fixture = CreateFixture(ClientHello(ValidToken));
+
+        await fixture.RunAsync();
+
+        Assert.True(fixture.Connection.IsAuthenticated);
+        Assert.Contains(MessageTypes.PcState, fixture.Socket.SentMessageTypes);
+    }
+
+    [Fact]
+    public async Task ClientHello_WithoutToken_IsRejected()
+    {
+        var fixture = CreateFixture(ClientHello(null));
+
+        await fixture.RunAsync();
+
+        Assert.False(fixture.Connection.IsAuthenticated);
+        Assert.Contains("authentication_missing", fixture.Socket.SentErrorCodes);
+    }
+
+    [Fact]
+    public async Task ClientHello_WithIncorrectToken_IsRejected()
+    {
+        var incorrectToken = Convert.ToBase64String(new byte[32]);
+        var fixture = CreateFixture(ClientHello(incorrectToken));
+
+        await fixture.RunAsync();
+
+        Assert.False(fixture.Connection.IsAuthenticated);
+        Assert.Contains("authentication_failed", fixture.Socket.SentErrorCodes);
+    }
+
+    [Fact]
+    public async Task ClientHello_WithExpiredTimestamp_IsRejected()
+    {
+        var fixture = CreateFixture(ClientHello(
+            ValidToken,
+            CurrentTime - ClientAuthenticationService.MaximumAttemptAge - TimeSpan.FromSeconds(1)));
+
+        await fixture.RunAsync();
+
+        Assert.False(fixture.Connection.IsAuthenticated);
+        Assert.Contains("authentication_expired", fixture.Socket.SentErrorCodes);
+    }
+
+    [Fact]
+    public async Task CommandRequest_BeforeAuthentication_IsRejectedWithoutDispatch()
+    {
+        var fixture = CreateFixture(CommandRequest());
+
+        await fixture.RunAsync();
+
+        Assert.Equal(0, fixture.CommandDispatcher.DispatchCount);
+        Assert.Contains("authentication_required", fixture.Socket.SentErrorCodes);
+    }
+
+    [Fact]
+    public async Task CommandRequest_AfterAuthentication_DispatchesAllowlistedIdentifier()
+    {
+        var fixture = CreateFixture(ClientHello(ValidToken), CommandRequest());
+
+        await fixture.RunAsync();
+
+        Assert.Equal(1, fixture.CommandDispatcher.DispatchCount);
+        Assert.Equal(PcCommandIds.OpenNotepad, fixture.CommandDispatcher.LastCommandId);
+        Assert.Contains(MessageTypes.CommandResult, fixture.Socket.SentMessageTypes);
+    }
+
+    [Fact]
+    public void AuthenticationAttemptLimiter_BlocksRepeatedAttemptsUntilWindowExpires()
+    {
+        var timeProvider = new AdjustableTimeProvider(CurrentTime);
+        var limiter = new AuthenticationAttemptLimiter(timeProvider, 2, TimeSpan.FromSeconds(30));
+
+        Assert.True(limiter.TryBeginAttempt(out _));
+        Assert.True(limiter.TryBeginAttempt(out _));
+        Assert.False(limiter.TryBeginAttempt(out var retryAfter));
+        Assert.Equal(TimeSpan.FromSeconds(30), retryAfter);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(30));
+
+        Assert.True(limiter.TryBeginAttempt(out _));
+    }
+
+    private static WebSocketFixture CreateFixture(params byte[][] clientMessages)
+    {
+        var timeProvider = new AdjustableTimeProvider(CurrentTime);
+        var socket = new ScriptedWebSocket(clientMessages);
+        var connection = new WebSocketClientConnection(socket, timeProvider);
+        var commandDispatcher = new RecordingCommandDispatcher();
+        var handler = new WebSocketConnectionHandler(
+            new ClientMessageParser(),
+            new ServerMessageFactory(timeProvider),
+            new WebSocketMessageReader(),
+            new ForegroundStateStore(timeProvider),
+            commandDispatcher,
+            new ClientAuthenticationService(ValidToken, timeProvider),
+            new AuthenticationAttemptLimiter(timeProvider),
+            timeProvider,
+            new TestHostApplicationLifetime(),
+            NullLogger<WebSocketConnectionHandler>.Instance);
+
+        return new WebSocketFixture(handler, connection, socket, commandDispatcher);
+    }
+
+    private static byte[] ClientHello(string? token, DateTimeOffset? timestamp = null) =>
+        token is null
+            ? CreateEnvelope(MessageTypes.ClientHello, timestamp ?? CurrentTime, new
+            {
+                clientName = "test-dashboard",
+                protocolVersion = ProtocolConstants.Version
+            })
+            : CreateEnvelope(MessageTypes.ClientHello, timestamp ?? CurrentTime, new
+            {
+                clientName = "test-dashboard",
+                protocolVersion = ProtocolConstants.Version,
+                authenticationToken = token
+            });
+
+    private static byte[] CommandRequest() =>
+        CreateEnvelope(MessageTypes.CommandRequest, CurrentTime, new
+        {
+            commandId = PcCommandIds.OpenNotepad
+        });
+
+    private static byte[] CreateEnvelope(string type, DateTimeOffset timestamp, object payload) =>
+        JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type,
+            messageId = Guid.NewGuid(),
+            timestampUtc = timestamp,
+            payload
+        });
+
+    private sealed record WebSocketFixture(
+        WebSocketConnectionHandler Handler,
+        WebSocketClientConnection Connection,
+        ScriptedWebSocket Socket,
+        RecordingCommandDispatcher CommandDispatcher)
+    {
+        public Task RunAsync() => Handler.HandleAsync(Connection, CancellationToken.None);
+    }
+
+    private sealed class RecordingCommandDispatcher : IPcCommandDispatcher
+    {
+        public int DispatchCount { get; private set; }
+
+        public string? LastCommandId { get; private set; }
+
+        public Task<PcCommandExecutionResult> DispatchAsync(
+            string commandId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            DispatchCount++;
+            LastCommandId = commandId;
+            return Task.FromResult(PcCommandExecutionResult.Success("Command completed."));
+        }
+    }
+
+    private sealed class AdjustableTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan duration) => _utcNow += duration;
+    }
+
+    private sealed class TestHostApplicationLifetime : IHostApplicationLifetime
+    {
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+
+        public void StopApplication()
+        {
+        }
+    }
+
+    private sealed class ScriptedWebSocket(IEnumerable<byte[]> receivedMessages) : WebSocket
+    {
+        private readonly Queue<byte[]> _receivedMessages = new(receivedMessages);
+        private readonly List<byte[]> _sentMessages = [];
+        private WebSocketCloseStatus? _closeStatus;
+        private string? _closeStatusDescription;
+        private WebSocketState _state = WebSocketState.Open;
+
+        public override WebSocketCloseStatus? CloseStatus => _closeStatus;
+
+        public override string? CloseStatusDescription => _closeStatusDescription;
+
+        public override WebSocketState State => _state;
+
+        public override string? SubProtocol => null;
+
+        public IReadOnlyList<string> SentMessageTypes => ReadSentStrings("type");
+
+        public IReadOnlyList<string> SentErrorCodes => ReadSentStrings("code", "error");
+
+        public override void Abort() => _state = WebSocketState.Aborted;
+
+        public override Task CloseAsync(
+            WebSocketCloseStatus closeStatus,
+            string? statusDescription,
+            CancellationToken cancellationToken)
+        {
+            _closeStatus = closeStatus;
+            _closeStatusDescription = statusDescription;
+            _state = WebSocketState.Closed;
+            return Task.CompletedTask;
+        }
+
+        public override Task CloseOutputAsync(
+            WebSocketCloseStatus closeStatus,
+            string? statusDescription,
+            CancellationToken cancellationToken) =>
+            CloseAsync(closeStatus, statusDescription, cancellationToken);
+
+        public override void Dispose() => _state = WebSocketState.Closed;
+
+        public override Task<WebSocketReceiveResult> ReceiveAsync(
+            ArraySegment<byte> buffer,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_receivedMessages.TryDequeue(out var message))
+            {
+                message.AsSpan().CopyTo(buffer.AsSpan());
+                return Task.FromResult(new WebSocketReceiveResult(
+                    message.Length,
+                    WebSocketMessageType.Text,
+                    true));
+            }
+
+            _state = WebSocketState.CloseReceived;
+            return Task.FromResult(new WebSocketReceiveResult(
+                0,
+                WebSocketMessageType.Close,
+                true,
+                WebSocketCloseStatus.NormalClosure,
+                "Test complete."));
+        }
+
+        public override Task SendAsync(
+            ArraySegment<byte> buffer,
+            WebSocketMessageType messageType,
+            bool endOfMessage,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _sentMessages.Add(buffer.ToArray());
+            return Task.CompletedTask;
+        }
+
+        private IReadOnlyList<string> ReadSentStrings(string propertyName, string? requiredType = null)
+        {
+            var values = new List<string>();
+            foreach (var bytes in _sentMessages)
+            {
+                using var document = JsonDocument.Parse(bytes);
+                var root = document.RootElement;
+                if (requiredType is not null && root.GetProperty("type").GetString() != requiredType)
+                {
+                    continue;
+                }
+
+                var source = requiredType is null ? root : root.GetProperty("payload");
+                var value = source.GetProperty(propertyName).GetString();
+                if (value is not null)
+                {
+                    values.Add(value);
+                }
+            }
+
+            return values;
+        }
+    }
+}

@@ -12,7 +12,7 @@ PiCommandStrip is a context-aware command strip for a 7-inch, 1024x600 landscape
 - Build the frontend with plain HTML, CSS, and JavaScript. Do not add Node.js, npm, a frontend framework, a build pipeline, third-party CDNs, or remotely hosted frontend assets.
 - Keep the UI usable at 1024x600 in landscape orientation. Prefer large touch targets, readable status, and layouts that do not depend on hover.
 - Prefer the .NET and browser standard libraries. Before adding any external package, explain the need and why built-in functionality is insufficient.
-- Keep the first architecture small. Do not add Docker, a database, MQTT, authentication, TLS, plugins, or microservices unless the project scope is explicitly changed.
+- Keep the architecture small. Do not add Docker, a database, MQTT, TLS, plugins, or microservices unless the project scope is explicitly changed. Pre-shared-token WebSocket authentication is now part of the explicitly enabled LAN mode.
 - Keep all project files in this repository.
 
 ## Safety boundary
@@ -23,6 +23,8 @@ PiCommandStrip is a context-aware command strip for a 7-inch, 1024x600 landscape
 - Validate every inbound WebSocket message, limit message sizes, and handle malformed or unsupported messages without terminating the host.
 - Keep command execution narrow and auditable. Do not introduce a generic process-launching command.
 - Log command identifiers, outcomes, and operational errors, but do not log secrets or unnecessary user content.
+- Keep the pre-shared token outside Git and frontend source. Development remains loopback-only; LAN binding requires the explicit `Lan` configuration and a concrete PC address.
+- Treat the current HTTP LAN mode as unencrypted and suitable only for a trusted Private network. Never suggest exposing its port to the internet.
 
 ## Architecture and code quality
 
@@ -43,4 +45,3 @@ PiCommandStrip is a context-aware command strip for a 7-inch, 1024x600 landscape
 - Run relevant build and tests after implementation changes and report the results accurately.
 - Update documentation when architecture, message contracts, commands, or setup steps change.
 - Do not create Git commits; the repository owner commits with GitHub Desktop.
-

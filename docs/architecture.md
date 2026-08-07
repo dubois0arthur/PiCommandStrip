@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture for the Windows-only first milestone. The ASP.NET Core host, static dashboard, health endpoint, version 1 WebSocket protocol, foreground-window monitoring, change-only broadcasting, connection management, the allowlisted `open_notepad` command, and the test project are implemented.
+This document describes the initial architecture through the first explicitly enabled Raspberry Pi LAN client. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Version 2 adds pre-shared-token authentication without changing the command or foreground-monitoring architecture.
 
 ## System shape
 
@@ -36,6 +36,8 @@ One process is enough for this milestone. Splitting the parts by responsibility 
 - Enables WebSockets and maps a dedicated endpoint such as `/ws`.
 - Owns application startup and graceful shutdown.
 - Serves all HTML, CSS, and JavaScript from the repository; no frontend asset is fetched from a CDN.
+- Binds to `127.0.0.1:5077` by default. The separate `Lan` configuration requires an explicit non-loopback PC address and uses the configured fixed port without relying on `launchSettings.json`.
+- Prints the usable dashboard URL after Kestrel starts.
 
 ### Foreground-window adapter
 
@@ -73,7 +75,7 @@ The implementation separates the latest-state store from a `ConcurrentDictionary
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 1 protocol is specified in [protocol.md](protocol.md). Foreground-state publication sends `pc_state` immediately after a compatible `client_hello` and subsequently only when meaningful state changes.
+The implemented version 2 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before foreground state, ping, or commands are accepted. Foreground-state publication then sends `pc_state` immediately and subsequently only when meaningful state changes.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -102,6 +104,7 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Sends only a fixed command identifier selected by a known UI control, plus a generated request ID for correlation.
 - Displays pending, success, rejected, and failed command outcomes.
 - Reconnects with a bounded delay after an unexpected disconnect.
+- Prompts for the pre-shared token and retains it only in browser `sessionStorage`; it is not part of the frontend source.
 - Uses a 1024x600 landscape layout with large touch targets and no hover dependency.
 
 The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, and `ui.js` owns DOM rendering, clock/context-age updates, control availability, and the bounded event log.
@@ -110,41 +113,7 @@ Client-side fixed buttons improve usability, but they are not a security boundar
 
 ## Data contracts
 
-Use small UTF-8 JSON messages with a `type` discriminator. A discriminator is a field that tells the receiver which message shape follows. Keep server-to-client and client-to-server types distinct.
-
-Illustrative foreground-state event:
-
-```json
-{
-  "type": "foregroundChanged",
-  "processName": "notepad",
-  "windowTitle": "Notes.txt - Notepad"
-}
-```
-
-Illustrative command request:
-
-```json
-{
-  "type": "commandRequest",
-  "requestId": "6c797f72-7a86-4d20-98fc-a5be66872e86",
-  "commandId": "demo.safe-command"
-}
-```
-
-Illustrative command result:
-
-```json
-{
-  "type": "commandResult",
-  "requestId": "6c797f72-7a86-4d20-98fc-a5be66872e86",
-  "commandId": "demo.safe-command",
-  "succeeded": true,
-  "message": "Command completed."
-}
-```
-
-The examples are a starting point. During implementation, contracts should be represented by explicit C# types, validated before dispatch, and documented when finalized. Result messages should be safe for display and should not expose stack traces or sensitive machine details.
+The finalized, direction-specific UTF-8 JSON envelopes and payload examples are maintained in [protocol.md](protocol.md). The server validates the `type` discriminator and constructs only known data records; result text remains safe for display and never includes stack traces or sensitive paths.
 
 ## End-to-end data flow
 
@@ -160,12 +129,12 @@ The examples are a starting point. During implementation, contracts should be re
 ### Command round trip
 
 1. The user presses a known dashboard button.
-2. JavaScript creates a unique request ID and sends a `commandRequest` containing only that ID and the button's fixed command ID.
+2. JavaScript creates a unique request ID and sends a `command_request` containing only that ID and the button's fixed command ID.
 3. The endpoint checks message size, JSON shape, message type, and required fields.
 4. The dispatcher looks up the command ID in its explicit allowlist.
 5. If absent, the dispatcher returns a rejected result and executes nothing.
 6. If present, the associated narrow handler runs with cancellation support.
-7. The endpoint sends a correlated `commandResult` to the requesting dashboard.
+7. The endpoint sends a correlated `command_result` to the requesting dashboard.
 8. JavaScript matches the result by request ID and displays the outcome.
 
 ## Error handling and observability
@@ -196,6 +165,8 @@ No external application NuGet or frontend packages are currently required. ASP.N
 
 The installed stable .NET SDK is pinned with `global.json`. The test project uses `Microsoft.NET.Test.Sdk` to host test execution, `xunit` for the test API and assertions, and `xunit.runner.visualstudio` for test discovery through the .NET and Visual Studio test platform.
 
-## Deferred network boundary
+## LAN boundary
 
-During this milestone, both browser and server run on the Windows PC. Moving the browser to the Raspberry Pi changes the trust boundary: the server must listen beyond loopback and traffic crosses the LAN. Authentication, authorization, TLS, origin policy, firewall configuration, and device provisioning must be designed before that deployment. The Windows-only prototype must not be presented as secure for untrusted networks.
+LAN mode is an explicit opt-in configuration. It binds only to the configured PC address, requires a random pre-shared token in `client_hello`, rate-limits failed authentication, and should be paired with a Windows Firewall rule limited to the Private profile and local subnet. See [lan-setup.md](lan-setup.md).
+
+HTTPS remains deferred. HTTP and `ws` traffic, including the token, foreground titles, and commands, is visible to a network observer and can be modified by an active attacker. LAN mode is therefore suitable only for a trusted Private network and its port must never be forwarded or otherwise exposed to the internet.

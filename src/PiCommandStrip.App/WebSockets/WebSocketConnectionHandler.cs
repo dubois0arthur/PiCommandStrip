@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
@@ -11,6 +12,8 @@ public sealed class WebSocketConnectionHandler(
     WebSocketMessageReader messageReader,
     ForegroundStateStore foregroundStateStore,
     IPcCommandDispatcher commandDispatcher,
+    ClientAuthenticationService authenticationService,
+    AuthenticationAttemptLimiter authenticationAttemptLimiter,
     TimeProvider timeProvider,
     IHostApplicationLifetime applicationLifetime,
     ILogger<WebSocketConnectionHandler> logger)
@@ -120,7 +123,60 @@ public sealed class WebSocketConnectionHandler(
                     return;
                 }
 
-                logger.LogInformation("WebSocket client identified as {ClientName}", clientHello.Payload.ClientName);
+                if (connection.IsAuthenticated)
+                {
+                    await SendErrorAsync(
+                        connection,
+                        clientHello.MessageId,
+                        "already_authenticated",
+                        "This connection is already authenticated.",
+                        cancellationToken);
+                    return;
+                }
+
+                if (!authenticationAttemptLimiter.TryBeginAttempt(out var retryAfter))
+                {
+                    logger.LogWarning(
+                        "WebSocket authentication attempt rate limited for connection {ConnectionId}",
+                        connection.ConnectionId);
+                    await SendErrorAsync(
+                        connection,
+                        clientHello.MessageId,
+                        "authentication_rate_limited",
+                        $"Too many authentication attempts. Try again in {Math.Ceiling(retryAfter.TotalSeconds)} seconds.",
+                        cancellationToken);
+                    return;
+                }
+
+                var authenticationStatus = authenticationService.Authenticate(
+                    clientHello.Payload.AuthenticationToken,
+                    clientHello.TimestampUtc);
+                if (authenticationStatus is not ClientAuthenticationStatus.Authenticated)
+                {
+                    logger.LogWarning(
+                        "WebSocket authentication failed with status {AuthenticationStatus} for connection {ConnectionId}",
+                        authenticationStatus,
+                        connection.ConnectionId);
+                    var (code, errorMessage) = authenticationStatus switch
+                    {
+                        ClientAuthenticationStatus.Missing =>
+                            ("authentication_missing", "An authentication token is required."),
+                        ClientAuthenticationStatus.Expired =>
+                            ("authentication_expired", "The authentication attempt has expired. Reconnect and try again."),
+                        _ =>
+                            ("authentication_failed", "Authentication failed.")
+                    };
+                    await SendErrorAsync(connection, clientHello.MessageId, code, errorMessage, cancellationToken);
+                    return;
+                }
+
+                connection.MarkAuthenticated();
+                authenticationAttemptLimiter.RecordSuccess();
+
+                logger.LogInformation(
+                    "WebSocket client {ClientName} authenticated for connection {ConnectionId}",
+                    clientHello.Payload.ClientName,
+                    connection.ConnectionId);
                 await connection.InitializePcStateAsync(
                     foregroundStateStore,
                     messageFactory,
@@ -128,18 +184,50 @@ public sealed class WebSocketConnectionHandler(
                 return;
 
             case PingMessage ping:
+                if (!await EnsureAuthenticatedAsync(connection, ping.MessageId, cancellationToken))
+                {
+                    return;
+                }
+
                 await connection.SendAsync(
                     messageFactory.Create(MessageTypes.Pong, new PongPayload(ping.MessageId)),
                     cancellationToken);
                 return;
 
             case CommandRequestMessage commandRequest:
+                if (!await EnsureAuthenticatedAsync(connection, commandRequest.MessageId, cancellationToken))
+                {
+                    return;
+                }
+
                 await HandleCommandRequestAsync(connection, commandRequest, cancellationToken);
                 return;
 
             default:
                 throw new InvalidOperationException($"Unhandled parsed message type {message.GetType().Name}.");
         }
+    }
+
+    private async Task<bool> EnsureAuthenticatedAsync(
+        WebSocketClientConnection connection,
+        Guid requestMessageId,
+        CancellationToken cancellationToken)
+    {
+        if (connection.IsAuthenticated)
+        {
+            return true;
+        }
+
+        logger.LogWarning(
+            "Rejected unauthenticated WebSocket message for connection {ConnectionId}",
+            connection.ConnectionId);
+        await SendErrorAsync(
+            connection,
+            requestMessageId,
+            "authentication_required",
+            "Authenticate with client_hello before sending this message.",
+            cancellationToken);
+        return false;
     }
 
     private async Task HandleCommandRequestAsync(

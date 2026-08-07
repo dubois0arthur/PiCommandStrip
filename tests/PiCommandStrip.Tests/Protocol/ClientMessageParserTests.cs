@@ -17,7 +17,8 @@ public sealed class ClientMessageParserTests
         var json = CreateEnvelope(MessageTypes.ClientHello, new
         {
             clientName = "test-dashboard",
-            protocolVersion = "1"
+            protocolVersion = ProtocolConstants.Version,
+            authenticationToken = "test-token"
         });
 
         var result = _parser.Parse(json);
@@ -28,7 +29,8 @@ public sealed class ClientMessageParserTests
         Assert.Equal(MessageId, message.MessageId);
         Assert.Equal(TimestampUtc, message.TimestampUtc);
         Assert.Equal("test-dashboard", message.Payload.ClientName);
-        Assert.Equal("1", message.Payload.ProtocolVersion);
+        Assert.Equal(ProtocolConstants.Version, message.Payload.ProtocolVersion);
+        Assert.Equal("test-token", message.Payload.AuthenticationToken);
     }
 
     [Fact]

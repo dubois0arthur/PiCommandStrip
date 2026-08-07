@@ -2,6 +2,10 @@ const maximumEventEntries = 8;
 
 const elements = {
     actionResult: document.querySelector("#action-result"),
+    authenticationForm: document.querySelector("#authentication-form"),
+    authenticationMessage: document.querySelector("#authentication-message"),
+    authenticationPanel: document.querySelector("#authentication-panel"),
+    authenticationToken: document.querySelector("#authentication-token"),
     connectionIndicator: document.querySelector("#connection-indicator"),
     connectionState: document.querySelector("#connection-state"),
     contextAge: document.querySelector("#context-age"),
@@ -81,6 +85,30 @@ export const dashboardUi = {
 
     bindOpenNotepad(callback) {
         elements.openNotepadButton.addEventListener("click", callback);
+    },
+
+    bindAuthentication(callback) {
+        elements.authenticationForm.addEventListener("submit", event => {
+            event.preventDefault();
+            const token = elements.authenticationToken.value.trim();
+            elements.authenticationToken.value = "";
+            callback(token);
+        });
+    },
+
+    showAuthenticationRequired(message = "Authentication is required.") {
+        elements.authenticationPanel.hidden = false;
+        elements.authenticationMessage.textContent = message;
+        elements.authenticationToken.focus();
+    },
+
+    showAuthenticating() {
+        elements.authenticationPanel.hidden = false;
+        elements.authenticationMessage.textContent = "Authenticatingâ€¦";
+    },
+
+    showAuthenticated() {
+        elements.authenticationPanel.hidden = true;
     },
 
     bindPing(callback) {

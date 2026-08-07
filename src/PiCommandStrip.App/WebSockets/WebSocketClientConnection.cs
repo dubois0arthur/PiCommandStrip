@@ -10,6 +10,7 @@ public sealed class WebSocketClientConnection(WebSocket socket, TimeProvider tim
 {
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private ForegroundWindowState? _lastSentPcState;
+    private int _isAuthenticated;
     private int _isReadyForBroadcasts;
 
     public Guid ConnectionId { get; } = Guid.NewGuid();
@@ -20,6 +21,11 @@ public sealed class WebSocketClientConnection(WebSocket socket, TimeProvider tim
         new(timeProvider, PcCommandCooldown.DefaultDuration);
 
     public bool IsReadyForBroadcasts => Volatile.Read(ref _isReadyForBroadcasts) == 1;
+
+    public bool IsAuthenticated => Volatile.Read(ref _isAuthenticated) == 1;
+
+    public bool MarkAuthenticated() =>
+        Interlocked.CompareExchange(ref _isAuthenticated, 1, 0) == 0;
 
     public async Task SendAsync<TPayload>(
         ProtocolEnvelope<TPayload> message,

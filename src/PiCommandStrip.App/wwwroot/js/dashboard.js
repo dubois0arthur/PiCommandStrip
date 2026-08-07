@@ -2,7 +2,32 @@ import { DashboardSocket } from "./protocol.js";
 import { dashboardUi } from "./ui.js";
 
 const automaticPingIntervalMilliseconds = 10000;
+const tokenStorageKey = "pi-command-strip-token";
 let lastConnectionState;
+
+function readStoredToken() {
+    try {
+        return sessionStorage.getItem(tokenStorageKey);
+    } catch {
+        return null;
+    }
+}
+
+function storeToken(token) {
+    try {
+        sessionStorage.setItem(tokenStorageKey, token);
+    } catch {
+        // The in-memory DashboardSocket still holds the token for this page.
+    }
+}
+
+function clearStoredToken() {
+    try {
+        sessionStorage.removeItem(tokenStorageKey);
+    } catch {
+        // Storage can be unavailable in privacy-restricted browser sessions.
+    }
+}
 
 const dashboardSocket = new DashboardSocket({
     onStatusChange(state, text) {
@@ -12,15 +37,25 @@ const dashboardSocket = new DashboardSocket({
             if (state === "connected") {
                 dashboardUi.addEvent("Connected to PC.", "success");
             } else if (state === "disconnected" || state === "error") {
-                dashboardUi.addEvent("Disconnected from PC; retrying.", "warning");
+                dashboardUi.addEvent(text, "warning");
             }
         }
 
         lastConnectionState = state;
     },
 
-    onServerHello() {
+    onAuthenticated() {
+        dashboardUi.showAuthenticated();
         dashboardSocket.sendPing("automatic");
+    },
+
+    onAuthenticating() {
+        dashboardUi.showAuthenticating();
+    },
+
+    onAuthenticationRequired(message) {
+        clearStoredToken();
+        dashboardUi.showAuthenticationRequired(message);
     },
 
     onPcState(state) {
@@ -63,6 +98,16 @@ dashboardUi.bindOpenNotepad(() => {
     }
 });
 
+dashboardUi.bindAuthentication(token => {
+    if (!token) {
+        dashboardUi.showAuthenticationRequired("Enter the pre-shared token.");
+        return;
+    }
+
+    storeToken(token);
+    dashboardSocket.connect(token);
+});
+
 dashboardUi.bindPing(() => {
     if (dashboardSocket.sendPing("manual")) {
         dashboardUi.setManualPingPending();
@@ -71,7 +116,13 @@ dashboardUi.bindPing(() => {
 
 dashboardUi.addEvent("Dashboard initialized.");
 dashboardUi.tickClock();
-dashboardSocket.connect();
+const storedToken = readStoredToken();
+if (storedToken) {
+    dashboardSocket.connect(storedToken);
+} else {
+    dashboardUi.setConnection("disconnected", "Authentication required");
+    dashboardUi.showAuthenticationRequired();
+}
 
 const clockTimer = setInterval(() => dashboardUi.tickClock(), 1000);
 const automaticPingTimer = setInterval(() => {

@@ -37,6 +37,31 @@
             </div>
         </header>
 
+        <section id="authentication-panel" class="authentication-panel" aria-labelledby="authentication-heading">
+            <form id="authentication-form" class="authentication-card">
+                <p class="section-label">Protected connection</p>
+                <h2 id="authentication-heading">Connect to the Windows PC</h2>
+                <p class="authentication-help">
+                    Enter the pre-shared token configured on the PC. It is kept only for this browser session.
+                </p>
+                <label for="authentication-token">Pre-shared token</label>
+                <input
+                    id="authentication-token"
+                    name="authentication-token"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    required>
+                <p id="authentication-message" class="authentication-message" role="status" aria-live="polite">
+                    Authentication is required.
+                </p>
+                <button class="action-button action-button-primary authentication-submit" type="submit">
+                    <span class="action-name">Connect</span>
+                    <span class="action-detail">Authenticate this dashboard</span>
+                </button>
+            </form>
+        </section>
+
         <main class="workspace">
             <section class="panel context-panel" aria-labelledby="context-heading">
                 <div class="panel-heading">
