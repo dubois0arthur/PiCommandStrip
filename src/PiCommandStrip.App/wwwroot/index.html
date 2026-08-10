@@ -7,43 +7,54 @@
     <link rel="stylesheet" href="/css/site.css">
 </head>
 <body>
-    <div id="app-shell" class="app-shell" data-connection="disconnected">
+    <div id="app-shell" class="app-shell" data-connection="disconnected" data-context="default">
         <h1 class="visually-hidden">Pi Command Strip</h1>
 
-        <header class="status-bar" aria-label="PC status" data-debug-label="Status">
-            <section class="status-context" aria-labelledby="active-context-label">
-                <span id="active-context-label" class="status-label">CTX // Active</span>
-                <strong id="header-context" class="status-value status-context-value">Waiting for PC</strong>
+        <header class="status-header" aria-label="PC status" data-debug-label="Status header">
+            <button
+                id="context-entry-button"
+                class="context-entry"
+                type="button"
+                aria-controls="diagnostics-panel"
+                aria-expanded="false">
+                <span class="status-kicker">Context</span>
+                <span class="context-entry-line">
+                    <strong id="header-context">Waiting</strong>
+                    <span id="header-context-mode" class="context-mode">Auto</span>
+                </span>
+            </button>
+
+            <section class="foreground-summary" aria-labelledby="foreground-summary-label">
+                <span id="foreground-summary-label" class="status-kicker">Foreground app</span>
+                <strong id="header-process">Waiting for PC</strong>
             </section>
 
-            <section class="status-item connection-item" aria-labelledby="connection-label">
+            <section class="connection-summary" aria-labelledby="connection-label">
                 <span id="connection-indicator" class="status-dot" aria-hidden="true"></span>
-                <span class="status-copy">
-                    <span id="connection-label" class="status-label">Link // PC</span>
-                    <strong id="connection-state" class="status-value" role="status" aria-live="polite">
-                        Connecting
-                    </strong>
+                <span>
+                    <span id="connection-label" class="status-kicker">PC link</span>
+                    <strong id="connection-state" role="status" aria-live="polite">Connecting</strong>
                 </span>
             </section>
 
-            <section class="status-item" aria-labelledby="latency-label">
-                <span id="latency-label" class="status-label">RTT // Latency</span>
-                <strong id="latency-value" class="status-value" aria-live="polite">&mdash;</strong>
+            <section class="metric-summary" aria-labelledby="latency-label">
+                <span id="latency-label" class="status-kicker">RTT</span>
+                <strong id="latency-value" aria-live="polite">&mdash;</strong>
             </section>
 
-            <section class="status-item time-item" aria-labelledby="clock-label">
-                <span id="clock-label" class="status-label">SYS // Local time</span>
-                <time id="current-time" class="status-value">--:--:--</time>
+            <section class="metric-summary clock-summary" aria-labelledby="clock-label">
+                <span id="clock-label" class="status-kicker">Local</span>
+                <time id="current-time">--:--</time>
             </section>
         </header>
 
         <div class="content-region">
             <section id="authentication-panel" class="authentication-panel" aria-labelledby="authentication-heading" hidden>
                 <form id="authentication-form" class="authentication-card">
-                    <p class="eyebrow">Secure handshake // Auth.01</p>
-                    <h2 id="authentication-heading">Connect to the Windows PC</h2>
+                    <p class="eyebrow">Secure PC connection</p>
+                    <h2 id="authentication-heading">Connect PiCommandStrip</h2>
                     <p class="authentication-help">
-                        Enter the pre-shared token configured on the PC. It stays in this browser session only.
+                        Enter the pre-shared token configured on the Windows PC. It remains in this browser session only.
                     </p>
                     <label for="authentication-token">Pre-shared token</label>
                     <input
@@ -56,112 +67,187 @@
                     <p id="authentication-message" class="authentication-message" role="status" aria-live="polite">
                         Authentication is required.
                     </p>
-                    <button class="action-button action-button-primary authentication-submit" type="submit">
-                        <span class="action-name">Connect</span>
-                        <span class="action-detail">Authenticate this dashboard</span>
+                    <button class="touch-action touch-action-primary authentication-submit" type="submit">
+                        <span class="touch-action-title">Connect</span>
+                        <span class="touch-action-detail">Authenticate this display</span>
                     </button>
                 </form>
             </section>
 
-            <main id="primary-view" class="primary-view" data-debug-label="Primary view">
-                <section class="panel context-panel" aria-labelledby="context-heading" data-debug-label="Context" data-module="CTX.01">
-                    <div class="panel-heading">
-                        <div>
-                            <p class="eyebrow">Foreground target // Live</p>
-                            <h2 id="context-heading">Active process</h2>
-                        </div>
-                        <p id="context-status" class="context-status" role="status" aria-live="polite">
-                            Waiting for state
-                        </p>
-                    </div>
+            <main id="workspace" class="workspace" data-debug-label="Dynamic workspace">
+                <section id="workspace-surface" class="workspace-surface">
+                    <section
+                        id="expanded-now-playing"
+                        class="now-playing-host now-playing-host-expanded"
+                        aria-label="Expanded now playing"
+                        hidden>
+                    </section>
 
-                    <div class="context-primary">
-                        <p class="context-field-label">Process signature</p>
-                        <p id="process-name" class="process-name" tabindex="-1">Waiting&hellip;</p>
-                        <p id="window-title" class="window-title">No window information received.</p>
-                    </div>
+                    <section id="context-workspace" class="context-workspace" aria-labelledby="workspace-title">
+                        <div class="workspace-copy">
+                            <p id="workspace-eyebrow" class="eyebrow">Automatic workspace</p>
+                            <h2 id="workspace-title">Command strip ready</h2>
+                            <p id="workspace-description" class="workspace-description">
+                                Context-aware controls will appear here when they are useful.
+                            </p>
+                            <p class="workspace-source">
+                                <span>Context source</span>
+                                <strong id="workspace-process">Waiting for foreground state</strong>
+                            </p>
+                        </div>
 
-                    <dl class="context-metadata" aria-label="Context details">
-                        <div>
-                            <dt>Process ID</dt>
-                            <dd id="process-id">&mdash;</dd>
-                        </div>
-                        <div>
-                            <dt>Last changed</dt>
-                            <dd id="context-age">&mdash;</dd>
-                        </div>
-                        <div class="context-selection-item">
-                            <dt><label for="context-selection">Selection</label></dt>
-                            <dd>
-                                <select id="context-selection" class="context-selection" disabled>
-                                    <option value="automatic">Automatic</option>
-                                </select>
-                            </dd>
-                        </div>
-                    </dl>
+                        <section id="context-action-area" class="context-action-area" aria-labelledby="context-actions-heading">
+                            <div class="section-heading">
+                                <div>
+                                    <p class="eyebrow">Available now</p>
+                                    <h3 id="context-actions-heading">Quick actions</h3>
+                                </div>
+                            </div>
+                            <div id="context-action-grid" class="context-action-grid"></div>
+                        </section>
+                    </section>
                 </section>
 
-                <section class="panel actions-panel" aria-labelledby="actions-heading" data-debug-label="Actions" data-module="ACT.02">
-                    <div class="actions-heading-row">
-                        <div>
-                            <p class="eyebrow">Execution bay // Safe</p>
-                            <h2 id="actions-heading">Command matrix</h2>
-                        </div>
-                        <span class="allowlist-badge">Safe-ID</span>
-                    </div>
-
-                    <div class="action-grid">
-                        <button id="open-notepad-button" class="action-button action-button-primary" type="button" disabled>
-                            <span class="action-state" aria-hidden="true"></span>
-                            <span class="action-copy">
-                                <span class="action-name">Open Notepad</span>
-                                <span class="action-detail">Launch Windows Notepad</span>
-                            </span>
-                        </button>
-                        <button id="ping-button" class="action-button" type="button" disabled>
-                            <span class="action-state" aria-hidden="true"></span>
-                            <span class="action-copy">
-                                <span class="action-name">Measure latency</span>
-                                <span class="action-detail">Send a round-trip ping</span>
-                            </span>
-                        </button>
-                    </div>
-
-                    <p class="action-hint">Actions are selected by the current PC context. More can be added to this area later.</p>
+                <section
+                    id="compact-now-playing"
+                    class="now-playing-host now-playing-host-compact"
+                    aria-label="Now playing"
+                    data-debug-label="Compact media"
+                    hidden>
                 </section>
 
                 <section id="offline-state" class="offline-state" aria-labelledby="offline-heading" role="status" aria-live="polite">
-                    <div class="offline-mark" aria-hidden="true">PC</div>
+                    <span class="offline-mark" aria-hidden="true">PC</span>
                     <div>
-                        <p class="eyebrow">Link interrupted // Retry</p>
-                        <h2 id="offline-heading">PC node unavailable</h2>
-                        <p id="offline-message">Trying to reconnect. Context and commands will return automatically.</p>
+                        <p class="eyebrow">Connection unavailable</p>
+                        <h2 id="offline-heading">Waiting for the Windows host</h2>
+                        <p id="offline-message">Trying to reconnect. Controls will return automatically.</p>
                     </div>
                 </section>
             </main>
         </div>
 
-        <footer class="utility-bar" aria-label="Persistent controls and feedback" data-debug-label="Utility">
-            <section class="utility-item result-item" aria-labelledby="result-label">
-                <span id="result-label" class="utility-label">CMD // Latest result</span>
-                <strong id="action-result" class="utility-value" role="status" aria-live="polite">
-                    No command sent this session.
-                </strong>
-            </section>
-
-            <section class="utility-item warning-item" aria-labelledby="warning-label">
-                <span id="warning-label" class="utility-label">SYS // Warning</span>
-                <strong id="warning-message" class="utility-value" role="status" aria-live="polite">
-                    PC unavailable &mdash; controls disabled.
-                </strong>
-            </section>
-
-            <button id="navigation-override-button" class="navigation-override" type="button">
-                <span class="utility-label">NAV // Override</span>
-                <span class="navigation-value">Command strip_</span>
+        <nav class="global-navigation" aria-label="Primary destinations" data-debug-label="Navigation">
+            <button id="nav-home" class="nav-destination" type="button" data-destination="home">
+                <span class="nav-icon" aria-hidden="true">&#8962;</span>
+                <span>Home</span>
             </button>
-        </footer>
+            <button id="nav-media" class="nav-destination" type="button" data-destination="media">
+                <span class="nav-icon" aria-hidden="true">&#9835;</span>
+                <span>Media</span>
+            </button>
+            <button
+                id="nav-more"
+                class="nav-destination"
+                type="button"
+                data-destination="more"
+                aria-controls="diagnostics-panel"
+                aria-expanded="false">
+                <span class="nav-icon" aria-hidden="true">&#8943;</span>
+                <span>More</span>
+            </button>
+        </nav>
     </div>
+
+    <button id="diagnostics-backdrop" class="diagnostics-backdrop" type="button" aria-label="Close system details" hidden></button>
+    <aside id="diagnostics-panel" class="diagnostics-panel" aria-labelledby="diagnostics-heading" hidden>
+        <header class="diagnostics-heading">
+            <div>
+                <p class="eyebrow">Developer and system information</p>
+                <h2 id="diagnostics-heading">System details</h2>
+            </div>
+            <button id="diagnostics-close" class="icon-button" type="button" aria-label="Close system details">&#10005;</button>
+        </header>
+
+        <label class="diagnostic-control" for="context-selection">
+            <span>Context selection</span>
+            <select id="context-selection" disabled>
+                <option value="automatic">Automatic</option>
+            </select>
+        </label>
+
+        <dl class="diagnostic-grid">
+            <div>
+                <dt>Foreground PID</dt>
+                <dd id="process-id">&mdash;</dd>
+            </div>
+            <div>
+                <dt>Context age</dt>
+                <dd id="context-age">&mdash;</dd>
+            </div>
+            <div>
+                <dt>Authentication</dt>
+                <dd id="diagnostic-authentication">Unavailable</dd>
+            </div>
+            <div>
+                <dt>Protocol</dt>
+                <dd>WebSocket v6</dd>
+            </div>
+        </dl>
+
+        <button id="ping-button" class="touch-action diagnostic-action" type="button" disabled>
+            <span class="touch-action-icon" aria-hidden="true">&#8644;</span>
+            <span>
+                <span class="touch-action-title">Measure RTT</span>
+                <span class="touch-action-detail">Run a manual diagnostic ping</span>
+            </span>
+        </button>
+    </aside>
+
+    <section id="feedback-toast" class="feedback-toast" role="status" aria-live="polite" hidden>
+        <span id="feedback-icon" class="feedback-icon" aria-hidden="true"></span>
+        <span id="feedback-message">Ready.</span>
+    </section>
+
+    <template id="now-playing-template">
+        <article class="now-playing-card">
+            <div class="now-playing-artwork" data-media-role="artwork-container">
+                <img data-media-role="artwork" alt="" decoding="async">
+                <div class="now-playing-artwork-fallback" data-media-role="artwork-fallback" aria-hidden="true">
+                    <span class="now-playing-artwork-symbol">&#9835;</span>
+                    <span>No artwork</span>
+                </div>
+            </div>
+
+            <div class="now-playing-content">
+                <div class="now-playing-copy">
+                    <span class="now-playing-source" data-media-role="source">Windows media</span>
+                    <h3 class="now-playing-title" data-media-role="title">No active media</h3>
+                    <p class="now-playing-byline" data-media-role="byline">Start playback in Spotify or a browser.</p>
+                </div>
+
+                <div class="now-playing-timeline">
+                    <input
+                        class="now-playing-progress"
+                        data-media-role="progress"
+                        type="range"
+                        min="0"
+                        max="1"
+                        value="0"
+                        step="1"
+                        aria-label="Seek in current media"
+                        disabled>
+                    <div class="now-playing-times" aria-hidden="true">
+                        <time data-media-role="current-time">--:--</time>
+                        <span>/</span>
+                        <time data-media-role="total-time">--:--</time>
+                    </div>
+                </div>
+
+                <div class="now-playing-controls" aria-label="Media controls">
+                    <button class="media-control" data-media-role="previous" type="button" aria-label="Previous" disabled>
+                        <span aria-hidden="true">&#x23EE;</span>
+                    </button>
+                    <button class="media-control media-control-primary" data-media-role="play-pause" type="button" aria-label="Play" disabled>
+                        <span data-media-role="play-pause-icon" aria-hidden="true">&#x25B6;</span>
+                    </button>
+                    <button class="media-control" data-media-role="next" type="button" aria-label="Next" disabled>
+                        <span aria-hidden="true">&#x23ED;</span>
+                    </button>
+                </div>
+            </div>
+        </article>
+    </template>
 
     <p id="activity-announcer" class="visually-hidden" role="status" aria-live="polite"></p>
     <aside id="layout-debug" class="layout-debug" hidden aria-label="Layout debug information">

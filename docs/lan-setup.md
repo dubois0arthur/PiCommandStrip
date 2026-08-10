@@ -71,7 +71,7 @@ Environment variables apply only to the current PowerShell process and child app
 
 ### Publish before creating a shortcut
 
-The `bin\Release\net10.0` folder is a development build output. It does not include the deployable `wwwroot` dashboard files, so a shortcut to its `.exe` can return HTTP 404 at `/`.
+The `bin\Release\net10.0-windows10.0.19041.0` folder is a development build output. It does not include the deployable `wwwroot` dashboard files, so a shortcut to its `.exe` can return HTTP 404 at `/`.
 
 After stopping the running server with `Ctrl+C`, publish a deployment folder:
 

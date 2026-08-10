@@ -58,6 +58,68 @@ public sealed class ClientMessageParserTests
 
         var message = Assert.IsType<CommandRequestMessage>(result.Message);
         Assert.Equal("demo.safe-command", message.Payload.CommandId);
+        Assert.Null(message.Payload.PositionMilliseconds);
+    }
+
+    [Fact]
+    public void Parse_ValidMediaSeek_ReturnsIntegerPosition()
+    {
+        var json = CreateEnvelope(MessageTypes.CommandRequest, new
+        {
+            commandId = PiCommandStrip.App.PcCommands.PcCommandIds.MediaSeek,
+            positionMilliseconds = 42_500
+        });
+
+        var result = _parser.Parse(json);
+
+        var message = Assert.IsType<CommandRequestMessage>(result.Message);
+        Assert.Equal(42_500, message.Payload.PositionMilliseconds);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(1.5)]
+    public void Parse_InvalidMediaSeekPosition_IsRejected(object positionMilliseconds)
+    {
+        var json = CreateEnvelope(MessageTypes.CommandRequest, new
+        {
+            commandId = PiCommandStrip.App.PcCommands.PcCommandIds.MediaSeek,
+            positionMilliseconds
+        });
+
+        var result = _parser.Parse(json);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("invalid_payload", result.Error?.Code);
+    }
+
+    [Fact]
+    public void Parse_MediaSeekWithoutPosition_IsRejected()
+    {
+        var json = CreateEnvelope(MessageTypes.CommandRequest, new
+        {
+            commandId = PiCommandStrip.App.PcCommands.PcCommandIds.MediaSeek
+        });
+
+        var result = _parser.Parse(json);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("invalid_payload", result.Error?.Code);
+    }
+
+    [Fact]
+    public void Parse_NonSeekMediaCommandWithPosition_IsRejected()
+    {
+        var json = CreateEnvelope(MessageTypes.CommandRequest, new
+        {
+            commandId = PiCommandStrip.App.PcCommands.PcCommandIds.MediaNext,
+            positionMilliseconds = 1_000
+        });
+
+        var result = _parser.Parse(json);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("invalid_payload", result.Error?.Code);
     }
 
     [Fact]

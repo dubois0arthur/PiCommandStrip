@@ -1,5 +1,13 @@
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
+const mediaCommandIds = new Set([
+    "media.play",
+    "media.pause",
+    "media.playPause",
+    "media.previous",
+    "media.next",
+    "media.seek"
+]);
 
 function createMessageId() {
     if (typeof crypto.randomUUID === "function") {
@@ -103,6 +111,27 @@ export class DashboardSocket {
         return messageId;
     }
 
+    sendMediaCommand(commandId, positionMilliseconds) {
+        if (!this.isConnected || !mediaCommandIds.has(commandId)) {
+            return null;
+        }
+
+        const payload = { commandId };
+        if (commandId === "media.seek") {
+            if (!Number.isFinite(positionMilliseconds) || positionMilliseconds < 0) {
+                return null;
+            }
+
+            payload.positionMilliseconds = Math.round(positionMilliseconds);
+        } else if (positionMilliseconds !== undefined) {
+            return null;
+        }
+
+        const messageId = createMessageId();
+        this.#send("command_request", messageId, payload);
+        return messageId;
+    }
+
     sendContextSelection(selection) {
         if (!this.isConnected || !selection) {
             return null;
@@ -191,7 +220,7 @@ export class DashboardSocket {
                 case "server_hello":
                     this.#send("client_hello", createMessageId(), {
                         clientName: "browser-dashboard",
-                        protocolVersion: "3",
+                        protocolVersion: "6",
                         authenticationToken: this.#token
                     });
                     this.#callbacks.onServerHello?.(message.payload);
@@ -206,6 +235,9 @@ export class DashboardSocket {
                     break;
                 case "context_state":
                     this.#callbacks.onContextState?.(message.payload);
+                    break;
+                case "media_state":
+                    this.#callbacks.onMediaState?.(message.payload);
                     break;
                 case "context_selection_result":
                     this.#callbacks.onContextSelectionResult?.(message.payload);

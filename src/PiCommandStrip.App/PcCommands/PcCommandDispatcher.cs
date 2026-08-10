@@ -17,10 +17,10 @@ public sealed class PcCommandDispatcher : IPcCommandDispatcher
     }
 
     public async Task<PcCommandExecutionResult> DispatchAsync(
-        string commandId,
+        PcCommandInvocation invocation,
         CancellationToken cancellationToken)
     {
-        if (!_handlers.TryGetValue(commandId, out var handler))
+        if (!_handlers.TryGetValue(invocation.CommandId, out var handler))
         {
             _logger.LogWarning("Rejected a PC command identifier that is not allowlisted");
             return PcCommandExecutionResult.Failure(UnknownCommandMessage);
@@ -30,7 +30,7 @@ public sealed class PcCommandDispatcher : IPcCommandDispatcher
 
         try
         {
-            var result = await handler.ExecuteAsync(cancellationToken);
+            var result = await handler.ExecuteAsync(invocation, cancellationToken);
             _logger.LogInformation(
                 "Allowlisted PC command {CommandId} completed with success {Succeeded}",
                 handler.CommandId,

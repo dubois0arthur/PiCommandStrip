@@ -3,6 +3,6 @@ namespace PiCommandStrip.App.PcCommands;
 public interface IPcCommandDispatcher
 {
     Task<PcCommandExecutionResult> DispatchAsync(
-        string commandId,
+        PcCommandInvocation invocation,
         CancellationToken cancellationToken);
 }

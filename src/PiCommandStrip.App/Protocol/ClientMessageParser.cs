@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PiCommandStrip.App.Contexts;
+using PiCommandStrip.App.PcCommands;
 
 namespace PiCommandStrip.App.Protocol;
 
@@ -129,20 +130,39 @@ public sealed class ClientMessageParser
         DateTimeOffset timestampUtc,
         JsonElement payload)
     {
-        if (!HasExactlyOneProperty(payload, "commandId"))
-        {
-            return ProtocolParseResult.Failure(
-                "invalid_payload",
-                "The command payload may contain only 'commandId'.",
-                messageId);
-        }
-
         if (!TryGetRequiredString(payload, "commandId", out var commandId) ||
             commandId.Length > MaximumCommandIdLength)
         {
             return ProtocolParseResult.Failure(
                 "invalid_payload",
                 $"'commandId' is required and must not exceed {MaximumCommandIdLength} characters.",
+                messageId);
+        }
+
+        if (commandId == PcCommandIds.MediaSeek)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "positionMilliseconds") ||
+                !TryGetRequiredInt64(payload, "positionMilliseconds", out var positionMilliseconds) ||
+                positionMilliseconds < 0 ||
+                positionMilliseconds > MediaCommandHandler.MaximumSeekPositionMilliseconds)
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'{PcCommandIds.MediaSeek}' requires only 'commandId' and a non-negative integer 'positionMilliseconds'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, positionMilliseconds)));
+        }
+
+        if (!HasExactlyOneProperty(payload, "commandId"))
+        {
+            return ProtocolParseResult.Failure(
+                "invalid_payload",
+                "This command payload may contain only 'commandId'.",
                 messageId);
         }
 
@@ -267,6 +287,15 @@ public sealed class ClientMessageParser
             property.ValueKind is JsonValueKind.String &&
             Guid.TryParse(property.GetString(), out value) &&
             value != Guid.Empty;
+    }
+
+    private static bool TryGetRequiredInt64(JsonElement parent, string name, out long value)
+    {
+        value = default;
+
+        return parent.TryGetProperty(name, out var property) &&
+            property.ValueKind is JsonValueKind.Number &&
+            property.TryGetInt64(out value);
     }
 
     private static bool TryGetRequiredUtcTimestamp(

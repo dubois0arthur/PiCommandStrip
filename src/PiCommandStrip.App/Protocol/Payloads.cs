@@ -25,6 +25,25 @@ public sealed record ContextStatePayload(
     string? ForegroundWindowTitle,
     DateTimeOffset ActiveSinceUtc);
 
+public sealed record MediaStatePayload(
+    bool HasActiveSession,
+    string? SessionSourceIdentifier,
+    string? SourceName,
+    string? Title,
+    string? Artist,
+    string? AlbumTitle,
+    string PlaybackState,
+    long? PositionMilliseconds,
+    long? TotalDurationMilliseconds,
+    bool SupportsPrevious,
+    bool SupportsNext,
+    bool SupportsPlay,
+    bool SupportsPause,
+    bool SupportsPlayPause,
+    bool SupportsSeeking,
+    DateTimeOffset LastUpdatedUtc,
+    string? ArtworkUrl);
+
 public sealed record ContextSelectionResultPayload(
     Guid RequestMessageId,
     bool Succeeded,
@@ -47,7 +66,9 @@ public sealed record ClientHelloPayload(
     string ProtocolVersion,
     string? AuthenticationToken);
 
-public sealed record CommandRequestPayload(string CommandId);
+public sealed record CommandRequestPayload(
+    string CommandId,
+    long? PositionMilliseconds = null);
 
 public sealed record ContextSelectionRequestPayload(string Mode, string? ContextId);
 

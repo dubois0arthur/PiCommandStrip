@@ -4,6 +4,7 @@ using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.Health;
 using PiCommandStrip.App.Hosting;
+using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.WebSockets;
 
@@ -21,6 +22,7 @@ var piCommandStripOptions = builder.Configuration
     .Get<PiCommandStripOptions>()
     ?? throw new InvalidOperationException("PiCommandStrip configuration is required.");
 var networkOptions = PiCommandStripOptionsValidator.ValidateNetwork(piCommandStripOptions.Network);
+var commandCooldown = PiCommandStripOptionsValidator.ValidateCommandCooldown(piCommandStripOptions.Commands);
 
 builder.WebHost.ConfigureKestrel(options =>
     options.Listen(networkOptions.ListenAddress, networkOptions.Port));
@@ -37,9 +39,10 @@ builder.Services.AddSingleton(new ClientAuthenticationService(
 builder.Services.AddSingleton<AuthenticationAttemptLimiter>();
 builder.Services.AddSingleton<HealthResponseFactory>();
 builder.Services.AddPcCommands();
-builder.Services.AddPiCommandStripWebSockets();
+builder.Services.AddPiCommandStripWebSockets(commandCooldown);
 builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
 builder.Services.AddForegroundWindowMonitoring();
+builder.Services.AddWindowsMediaSessionMonitoring();
 
 var app = builder.Build();
 
@@ -58,6 +61,7 @@ app.UseWebSockets(new WebSocketOptions
 
 app.MapGet("/health", (HealthResponseFactory healthResponseFactory) =>
     Results.Ok(healthResponseFactory.Create()));
+app.MapMediaArtwork();
 app.MapPiCommandStripWebSocket();
 
 app.Run();

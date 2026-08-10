@@ -5,6 +5,52 @@ const automaticPingIntervalMilliseconds = 10000;
 const tokenStorageKey = "pi-command-strip-token";
 let lastConnectionState;
 
+function readLayoutFixture() {
+    const isLoopback = window.location.hostname === "127.0.0.1" ||
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "::1";
+    if (!isLoopback || new URLSearchParams(window.location.search).get("layoutDebug") !== "1") {
+        return null;
+    }
+
+    return new URLSearchParams(window.location.search).get("layoutFixture");
+}
+
+const layoutFixture = readLayoutFixture();
+
+function applyLayoutFixture(state) {
+    if (layoutFixture === "no-media") {
+        return {
+            hasActiveSession: false,
+            playbackState: "none",
+            lastUpdatedAtUtc: new Date().toISOString()
+        };
+    }
+
+    if (layoutFixture === "long-media") {
+        return {
+            hasActiveSession: true,
+            sessionSourceIdentifier: "Firefox",
+            sourceName: "Firefox",
+            title: "A deliberately very long browser media title that must truncate predictably without pushing the touchscreen controls off screen",
+            artist: null,
+            albumTitle: null,
+            playbackState: "playing",
+            positionMilliseconds: 3723000,
+            totalDurationMilliseconds: 7265000,
+            supportsPrevious: false,
+            supportsNext: false,
+            supportsPlay: true,
+            supportsPause: true,
+            supportsSeeking: true,
+            artworkUrl: null,
+            lastUpdatedAtUtc: new Date().toISOString()
+        };
+    }
+
+    return state;
+}
+
 function readStoredToken() {
     try {
         return sessionStorage.getItem(tokenStorageKey);
@@ -66,6 +112,10 @@ const dashboardSocket = new DashboardSocket({
         dashboardUi.renderContextState(state);
     },
 
+    onMediaState(state) {
+        dashboardUi.renderMediaState(applyLayoutFixture(state));
+    },
+
     onContextSelectionResult(result) {
         dashboardUi.showContextSelectionResult(result);
     },
@@ -81,6 +131,8 @@ const dashboardSocket = new DashboardSocket({
     onCommandResult(result) {
         if (result.commandId === "open_notepad") {
             dashboardUi.showCommandResult(result);
+        } else if (result.commandId.startsWith("media.")) {
+            dashboardUi.showMediaCommandResult(result);
         }
     },
 
@@ -104,15 +156,15 @@ const dashboardSocket = new DashboardSocket({
     }
 });
 
-dashboardUi.bindOpenNotepad(() => {
-    if (dashboardSocket.sendOpenNotepad()) {
-        dashboardUi.setCommandPending();
-    }
-});
-
 dashboardUi.bindContextSelection(selection => {
     if (dashboardSocket.sendContextSelection(selection)) {
         dashboardUi.setContextSelectionPending();
+    }
+});
+
+dashboardUi.bindMediaControls((commandId, positionMilliseconds) => {
+    if (dashboardSocket.sendMediaCommand(commandId, positionMilliseconds)) {
+        dashboardUi.setMediaCommandPending(commandId);
     }
 });
 
@@ -132,7 +184,7 @@ dashboardUi.bindPing(() => {
     }
 });
 
-dashboardUi.bindNavigationOverride();
+dashboardUi.bindNavigation();
 dashboardUi.initializeLayoutDebug();
 dashboardUi.addEvent("Dashboard initialized.");
 dashboardUi.tickClock();

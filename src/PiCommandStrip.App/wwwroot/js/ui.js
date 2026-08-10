@@ -1,48 +1,76 @@
+import { NowPlayingController } from "./now-playing.js";
+
 const elements = {
-    actionResult: document.querySelector("#action-result"),
     activityAnnouncer: document.querySelector("#activity-announcer"),
     appShell: document.querySelector("#app-shell"),
     authenticationForm: document.querySelector("#authentication-form"),
     authenticationMessage: document.querySelector("#authentication-message"),
     authenticationPanel: document.querySelector("#authentication-panel"),
     authenticationToken: document.querySelector("#authentication-token"),
+    compactNowPlaying: document.querySelector("#compact-now-playing"),
     connectionIndicator: document.querySelector("#connection-indicator"),
     connectionState: document.querySelector("#connection-state"),
-    contextPanel: document.querySelector(".context-panel"),
+    contextActionArea: document.querySelector("#context-action-area"),
+    contextActionGrid: document.querySelector("#context-action-grid"),
+    contextEntryButton: document.querySelector("#context-entry-button"),
     contextAge: document.querySelector("#context-age"),
     contextSelection: document.querySelector("#context-selection"),
-    contextStatus: document.querySelector("#context-status"),
+    contextWorkspace: document.querySelector("#context-workspace"),
     currentTime: document.querySelector("#current-time"),
+    diagnosticAuthentication: document.querySelector("#diagnostic-authentication"),
+    diagnosticsBackdrop: document.querySelector("#diagnostics-backdrop"),
+    diagnosticsClose: document.querySelector("#diagnostics-close"),
+    diagnosticsPanel: document.querySelector("#diagnostics-panel"),
+    expandedNowPlaying: document.querySelector("#expanded-now-playing"),
+    feedbackIcon: document.querySelector("#feedback-icon"),
+    feedbackMessage: document.querySelector("#feedback-message"),
+    feedbackToast: document.querySelector("#feedback-toast"),
     headerContext: document.querySelector("#header-context"),
+    headerContextMode: document.querySelector("#header-context-mode"),
+    headerProcess: document.querySelector("#header-process"),
     latencyValue: document.querySelector("#latency-value"),
     layoutDebug: document.querySelector("#layout-debug"),
-    navigationOverrideButton: document.querySelector("#navigation-override-button"),
+    navHome: document.querySelector("#nav-home"),
+    navMedia: document.querySelector("#nav-media"),
+    navMore: document.querySelector("#nav-more"),
+    nowPlayingTemplate: document.querySelector("#now-playing-template"),
     offlineMessage: document.querySelector("#offline-message"),
     offlineState: document.querySelector("#offline-state"),
-    actionsPanel: document.querySelector(".actions-panel"),
-    openNotepadButton: document.querySelector("#open-notepad-button"),
     pingButton: document.querySelector("#ping-button"),
     processId: document.querySelector("#process-id"),
-    processName: document.querySelector("#process-name"),
     viewportDimensions: document.querySelector("#viewport-dimensions"),
-    warningMessage: document.querySelector("#warning-message"),
-    windowTitle: document.querySelector("#window-title")
+    workspace: document.querySelector("#workspace"),
+    workspaceDescription: document.querySelector("#workspace-description"),
+    workspaceEyebrow: document.querySelector("#workspace-eyebrow"),
+    workspaceProcess: document.querySelector("#workspace-process"),
+    workspaceSurface: document.querySelector("#workspace-surface"),
+    workspaceTitle: document.querySelector("#workspace-title")
 };
 
-let commandPending = false;
+const nowPlaying = new NowPlayingController(
+    elements.compactNowPlaying,
+    elements.expandedNowPlaying,
+    elements.nowPlayingTemplate);
+
 let connected = false;
 let contextChangedAt;
 let contextSelectionPending = false;
+let diagnosticsOpen = false;
+let feedbackTimer;
 let lastContextSelection = "automatic";
+let lastRenderedActionKey;
 let lastRenderedContextKey;
+let latestContextState = {
+    contextId: "default",
+    displayName: "Default",
+    selectionMode: "automatic",
+    source: "fallback"
+};
+let latestMediaState;
+let latestPcState;
 let layoutDebugEnabled = false;
 let manualPingPending = false;
-
-function updateButtonStates() {
-    elements.openNotepadButton.disabled = !connected || commandPending;
-    elements.pingButton.disabled = !connected || manualPingPending;
-    elements.contextSelection.disabled = !connected || contextSelectionPending;
-}
+let mediaCommandPending = false;
 
 function setActionState(button, state) {
     if (state) {
@@ -58,8 +86,11 @@ function setActionState(button, state) {
     }
 }
 
-function setWarning(message) {
-    elements.warningMessage.textContent = message;
+function updateControlStates() {
+    elements.contextSelection.disabled = !connected || contextSelectionPending;
+    elements.navHome.disabled = !connected || contextSelectionPending;
+    elements.navMedia.disabled = !connected || contextSelectionPending;
+    elements.pingButton.disabled = !connected || manualPingPending;
 }
 
 function formatElapsed(timestamp) {
@@ -77,12 +108,29 @@ function formatElapsed(timestamp) {
     }
 
     const totalMinutes = Math.floor(totalSeconds / 60);
-    if (totalMinutes < 60) {
-        return `${totalMinutes}m ago`;
-    }
+    return totalMinutes < 60
+        ? `${totalMinutes}m ago`
+        : `${Math.floor(totalMinutes / 60)}h ago`;
+}
 
-    const totalHours = Math.floor(totalMinutes / 60);
-    return `${totalHours}h ago`;
+function showFeedback(message, tone = "neutral", durationMilliseconds = 3500) {
+    clearTimeout(feedbackTimer);
+    elements.feedbackToast.hidden = false;
+    elements.feedbackToast.dataset.tone = tone;
+    elements.feedbackMessage.textContent = message;
+    elements.feedbackIcon.textContent = tone === "failure"
+        ? "!"
+        : tone === "warning"
+            ? "△"
+            : tone === "success"
+                ? "✓"
+                : "·";
+
+    if (durationMilliseconds > 0) {
+        feedbackTimer = setTimeout(() => {
+            elements.feedbackToast.hidden = true;
+        }, durationMilliseconds);
+    }
 }
 
 function updateViewportDimensions() {
@@ -100,17 +148,194 @@ function setLayoutDebug(enabled) {
     }
 }
 
+function normalizeApplicationName(value) {
+    return typeof value === "string"
+        ? value.toLowerCase().replace(/\.exe$/i, "").replace(/[^a-z0-9]/g, "")
+        : "";
+}
+
+function normalizeComparableText(value) {
+    return typeof value === "string"
+        ? value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+        : "";
+}
+
+function browserOwnsMedia() {
+    if (latestContextState.contextId !== "browser" || latestMediaState?.hasActiveSession !== true) {
+        return false;
+    }
+
+    const foreground = normalizeApplicationName(
+        latestContextState.foregroundProcess || latestPcState?.processName);
+    if (!foreground) {
+        return false;
+    }
+
+    const mediaSource = normalizeApplicationName(
+        `${latestMediaState.sourceName || ""}${latestMediaState.sessionSourceIdentifier || ""}`);
+    if (mediaSource.includes(foreground)) {
+        return true;
+    }
+
+    const aliases = {
+        chrome: ["chrome", "googlechrome"],
+        firefox: ["firefox", "mozilla"],
+        msedge: ["msedge", "microsoftedge", "edge"]
+    };
+    if ((aliases[foreground] || [foreground]).some(alias => mediaSource.includes(alias))) {
+        return true;
+    }
+
+    // Browsers can publish opaque Windows AppUserModelIds. A matching media title in
+    // the foreground tab is a stronger ownership signal than guessing from that ID.
+    const foregroundTitle = normalizeComparableText(
+        latestContextState.foregroundWindowTitle || latestPcState?.windowTitle);
+    const mediaTitle = normalizeComparableText(latestMediaState.title);
+    return mediaTitle.length >= 8 &&
+        (foregroundTitle.includes(mediaTitle) || mediaTitle.includes(foregroundTitle));
+}
+
+function mediaPresentation() {
+    if (!connected || latestMediaState?.hasActiveSession !== true) {
+        return "hidden";
+    }
+
+    if (latestContextState.contextId === "media" || latestContextState.contextId === "default") {
+        return "expanded";
+    }
+
+    if (latestContextState.contextId === "browser" && browserOwnsMedia()) {
+        return "expanded";
+    }
+
+    return "compact";
+}
+
+function createContextAction(action) {
+    const button = document.createElement("button");
+    button.className = "touch-action";
+    button.type = "button";
+    button.dataset.contextAction = action.id;
+
+    const icon = document.createElement("span");
+    icon.className = "touch-action-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = action.icon;
+
+    const copy = document.createElement("span");
+    const title = document.createElement("span");
+    title.className = "touch-action-title";
+    title.textContent = action.title;
+    const detail = document.createElement("span");
+    detail.className = "touch-action-detail";
+    detail.textContent = action.detail;
+    copy.append(title, detail);
+    button.append(icon, copy);
+    return button;
+}
+
+function renderContextActions(actions) {
+    const actionKey = actions.map(action => action.id).join(":");
+    if (actionKey !== lastRenderedActionKey) {
+        elements.contextActionGrid.replaceChildren(...actions.map(createContextAction));
+        lastRenderedActionKey = actionKey;
+    }
+
+    elements.contextActionArea.hidden = actions.length === 0;
+}
+
+function workspaceContent() {
+    const process = latestPcState?.isAvailable
+        ? latestPcState.processName || "Unknown application"
+        : "No foreground application";
+
+    const definitions = {
+        audio: {
+            eyebrow: "Audio context",
+            title: "Audio workspace ready",
+            description: "Master output, device selection, and application sessions will occupy this workspace in the next feature phase.",
+            actions: []
+        },
+        browser: {
+            eyebrow: "Browser / Research",
+            title: "Research workspace ready",
+            description: "Browser-specific tools are not connected yet. Media owned by this browser is promoted automatically when Windows identifies its source.",
+            actions: []
+        },
+        gaming: {
+            eyebrow: "Gaming context",
+            title: "Gaming workspace ready",
+            description: "This surface is reserved for a compact mix of game, voice, music, and global controls once those integrations exist.",
+            actions: []
+        },
+        media: {
+            eyebrow: "Media context",
+            title: "No active media",
+            description: "Start playback in an application that publishes Windows system media controls.",
+            actions: []
+        },
+        default: {
+            eyebrow: "Automatic workspace",
+            title: "Command strip ready",
+            description: "No higher-value contextual controls are available right now.",
+            actions: [{
+                id: "system-details",
+                icon: "⚙",
+                title: "System details",
+                detail: "Context and diagnostics"
+            }]
+        }
+    };
+
+    const definition = definitions[latestContextState.contextId] || definitions.default;
+    elements.workspaceEyebrow.textContent = definition.eyebrow;
+    elements.workspaceTitle.textContent = definition.title;
+    elements.workspaceDescription.textContent = definition.description;
+    elements.workspaceProcess.textContent = process;
+    renderContextActions(definition.actions);
+}
+
+function renderWorkspace() {
+    const presentation = mediaPresentation();
+    elements.appShell.dataset.context = latestContextState.contextId || "default";
+    elements.appShell.dataset.mediaPresentation = presentation;
+    nowPlaying.setPresentation(presentation);
+    elements.contextWorkspace.hidden = presentation === "expanded";
+    workspaceContent();
+}
+
+function updateNavigationState() {
+    const automatic = lastContextSelection === "automatic";
+    const mediaPinned = lastContextSelection === "media";
+    elements.navHome.dataset.active = automatic ? "true" : "false";
+    elements.navMedia.dataset.active = mediaPinned ? "true" : "false";
+    elements.navMore.dataset.active = diagnosticsOpen ? "true" : "false";
+    elements.navHome.setAttribute("aria-pressed", automatic ? "true" : "false");
+    elements.navMedia.setAttribute("aria-pressed", mediaPinned ? "true" : "false");
+    elements.navMore.setAttribute("aria-pressed", diagnosticsOpen ? "true" : "false");
+}
+
+function setDiagnosticsOpen(open, focusContextSelection = false) {
+    diagnosticsOpen = open;
+    elements.diagnosticsPanel.hidden = !open;
+    elements.diagnosticsBackdrop.hidden = !open;
+    elements.contextEntryButton.setAttribute("aria-expanded", open ? "true" : "false");
+    elements.navMore.setAttribute("aria-expanded", open ? "true" : "false");
+    updateNavigationState();
+
+    if (open) {
+        window.requestAnimationFrame(() => {
+            (focusContextSelection ? elements.contextSelection : elements.diagnosticsClose).focus();
+        });
+    }
+}
+
 export const dashboardUi = {
     addEvent(message, tone = "neutral") {
         elements.activityAnnouncer.textContent = message;
-
-        if (tone === "warning" || tone === "failure") {
-            setWarning(message);
+        if (tone !== "neutral") {
+            showFeedback(message, tone, tone === "failure" ? 7000 : 3200);
         }
-    },
-
-    bindOpenNotepad(callback) {
-        elements.openNotepadButton.addEventListener("click", callback);
     },
 
     bindAuthentication(callback) {
@@ -123,16 +348,37 @@ export const dashboardUi = {
     },
 
     bindContextSelection(callback) {
-        elements.contextSelection.addEventListener("change", () => {
-            callback(elements.contextSelection.value);
+        elements.contextSelection.addEventListener("change", () =>
+            callback(elements.contextSelection.value));
+        elements.navHome.addEventListener("click", () => callback("automatic"));
+        elements.navMedia.addEventListener("click", () => callback("media"));
+    },
+
+    bindNavigation() {
+        elements.contextEntryButton.addEventListener("click", () =>
+            setDiagnosticsOpen(!diagnosticsOpen, true));
+        elements.navMore.addEventListener("click", () => setDiagnosticsOpen(!diagnosticsOpen));
+        elements.contextActionGrid.addEventListener("click", event => {
+            const action = event.target.closest("[data-context-action]")?.dataset.contextAction;
+            if (action === "system-details") {
+                setDiagnosticsOpen(true);
+            }
+        });
+        elements.diagnosticsBackdrop.addEventListener("click", () => setDiagnosticsOpen(false));
+        elements.diagnosticsClose.addEventListener("click", () => setDiagnosticsOpen(false));
+        window.addEventListener("keydown", event => {
+            if (event.key === "Escape" && diagnosticsOpen) {
+                setDiagnosticsOpen(false);
+            }
         });
     },
 
-    bindNavigationOverride() {
-        elements.navigationOverrideButton.addEventListener("click", () => {
-            elements.activityAnnouncer.textContent = "Primary command strip selected.";
-            window.requestAnimationFrame(() => elements.processName.focus({ preventScroll: true }));
-        });
+    bindMediaControls(callback) {
+        nowPlaying.bindCommands(callback);
+    },
+
+    bindPing(callback) {
+        elements.pingButton.addEventListener("click", callback);
     },
 
     initializeLayoutDebug() {
@@ -165,49 +411,39 @@ export const dashboardUi = {
         elements.authenticationPanel.hidden = true;
     },
 
-    bindPing(callback) {
-        elements.pingButton.addEventListener("click", callback);
-    },
-
     renderPcState(state) {
-        if (state.isAvailable) {
-            const processName = state.processName || "Unknown application";
-            elements.processName.textContent = processName;
-            elements.windowTitle.textContent = state.windowTitle || "No window title";
-            elements.processId.textContent = state.processId;
-            setWarning("Trusted private network only.");
-        } else {
-            elements.processName.textContent = "No foreground process";
-            elements.windowTitle.textContent = "Windows did not report a usable foreground window.";
-            elements.processId.textContent = "—";
-            this.addEvent("Foreground process unavailable; the Default context remains available.", "warning");
-        }
+        latestPcState = state;
+        const processName = state.isAvailable
+            ? state.processName || "Unknown application"
+            : "Foreground unavailable";
+        elements.headerProcess.textContent = processName;
+        elements.headerProcess.title = state.windowTitle || processName;
+        elements.processId.textContent = state.isAvailable ? state.processId : "—";
+        renderWorkspace();
     },
 
     renderContextState(state) {
+        latestContextState = state;
         contextChangedAt = new Date(state.activeSinceUtc);
-        const selectionValue = state.selectionMode === "manual"
-            ? state.contextId
-            : "automatic";
-        lastContextSelection = selectionValue;
-        elements.contextSelection.value = selectionValue;
+        lastContextSelection = state.selectionMode === "manual" ? state.contextId : "automatic";
+        elements.contextSelection.value = lastContextSelection;
         elements.headerContext.textContent = state.displayName;
-        elements.contextStatus.dataset.state = "available";
-
-        const sourceLabels = {
-            fallback: "fallback",
-            foreground_process: state.trigger,
-            manual_override: "pinned"
-        };
-        const modeLabel = state.selectionMode === "manual" ? "Manual" : "Automatic";
-        elements.contextStatus.textContent = `${modeLabel} · ${sourceLabels[state.source] || state.source}`;
+        elements.headerContextMode.textContent = state.selectionMode === "manual" ? "Pinned" : "Auto";
         elements.contextAge.textContent = formatElapsed(contextChangedAt);
+        updateNavigationState();
+        renderWorkspace();
 
         const contextKey = `${state.contextId}:${state.selectionMode}:${state.activeSinceUtc}`;
         if (contextKey !== lastRenderedContextKey) {
-            this.addEvent(`${state.displayName} context active in ${modeLabel.toLowerCase()} mode.`);
+            elements.activityAnnouncer.textContent = `${state.displayName} context active.`;
             lastRenderedContextKey = contextKey;
         }
+    },
+
+    renderMediaState(state) {
+        latestMediaState = state;
+        nowPlaying.setMediaState(state);
+        renderWorkspace();
     },
 
     setAvailableContexts(contexts = []) {
@@ -229,94 +465,85 @@ export const dashboardUi = {
 
     setContextSelectionPending() {
         contextSelectionPending = true;
-        elements.actionResult.dataset.state = "pending";
-        elements.actionResult.textContent = "Updating context selection…";
-        updateButtonStates();
+        showFeedback("Updating context…", "neutral", 0);
+        updateControlStates();
     },
 
     showContextSelectionResult(result) {
         contextSelectionPending = false;
-        elements.actionResult.dataset.state = result.succeeded ? "success" : "failure";
-        elements.actionResult.textContent = result.message;
-
         if (!result.succeeded) {
             elements.contextSelection.value = lastContextSelection;
         }
-
-        this.addEvent(result.message, result.succeeded ? "success" : "failure");
-        updateButtonStates();
+        showFeedback(result.message, result.succeeded ? "success" : "failure", result.succeeded ? 2600 : 7000);
+        elements.activityAnnouncer.textContent = result.message;
+        updateControlStates();
     },
 
-    setCommandPending() {
-        commandPending = true;
-        elements.actionResult.dataset.state = "pending";
-        elements.actionResult.textContent = "Opening Notepad…";
-        setActionState(elements.openNotepadButton, "processing");
-        updateButtonStates();
+    setMediaCommandPending(commandId) {
+        mediaCommandPending = true;
+        nowPlaying.setCommandPending(true);
+        showFeedback(commandId === "media.seek" ? "Seeking…" : "Sending media control…", "neutral", 0);
+    },
+
+    showMediaCommandResult(result) {
+        mediaCommandPending = false;
+        nowPlaying.setCommandPending(false);
+        showFeedback(result.message, result.succeeded ? "success" : "failure", result.succeeded ? 2200 : 7000);
+        elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
     },
 
     showCommandResult(result) {
-        commandPending = false;
-        const state = result.succeeded ? "success" : "failure";
-        elements.actionResult.dataset.state = state;
-        elements.actionResult.textContent = result.message;
-        setActionState(elements.openNotepadButton, state);
-        this.addEvent(
-            `open_notepad: ${result.message}`,
-            state);
-        updateButtonStates();
+        showFeedback(result.message, result.succeeded ? "success" : "failure", result.succeeded ? 2200 : 7000);
+        elements.activityAnnouncer.textContent = result.message;
     },
 
     showDisconnectedCommand() {
-        if (!commandPending) {
+        if (!mediaCommandPending) {
             return;
         }
 
-        commandPending = false;
-        elements.actionResult.dataset.state = "failure";
-        elements.actionResult.textContent = "Disconnected before command completion.";
-        setActionState(elements.openNotepadButton, "failure");
-        this.addEvent("Command interrupted by disconnect.", "failure");
-        updateButtonStates();
+        mediaCommandPending = false;
+        nowPlaying.setCommandPending(false);
+        showFeedback("Disconnected before command completion.", "failure", 7000);
     },
 
     setConnection(state, text) {
         connected = state === "connected";
+        nowPlaying.setConnected(connected);
         elements.appShell.dataset.connection = state;
         elements.connectionIndicator.dataset.state = state;
         elements.connectionState.textContent = text.toLowerCase().includes("retrying")
-            ? "Retrying connection"
+            ? "Retrying"
             : text;
+        elements.diagnosticAuthentication.textContent = connected ? "Authenticated" : "Unavailable";
         elements.offlineState.hidden = connected;
-        [elements.contextPanel, elements.actionsPanel].forEach(panel => {
-            panel.inert = !connected;
-            panel.setAttribute("aria-hidden", connected ? "false" : "true");
-        });
+        elements.workspaceSurface.inert = !connected;
+        elements.compactNowPlaying.inert = !connected;
 
         if (connected) {
-            elements.offlineMessage.textContent = "Trying to reconnect. Context and commands will return automatically.";
-            setWarning("Trusted private network only.");
+            elements.offlineMessage.textContent = "Trying to reconnect. Controls will return automatically.";
         } else {
             manualPingPending = false;
             contextSelectionPending = false;
             elements.latencyValue.textContent = "—";
-            elements.headerContext.textContent = state === "connecting" ? "Waiting for PC" : "PC unavailable";
+            elements.headerContext.textContent = state === "connecting" ? "Waiting" : "Unavailable";
+            elements.headerContextMode.textContent = "Offline";
+            elements.headerProcess.textContent = "Waiting for PC";
             elements.offlineMessage.textContent = state === "connecting"
-                ? "Connecting to the Windows host. Controls will enable when authentication completes."
-                : "Trying to reconnect. Context and commands will return automatically.";
-            setWarning("PC unavailable — controls disabled.");
+                ? "Connecting to the Windows host."
+                : "Trying to reconnect. Controls will return automatically.";
             setActionState(elements.pingButton, null);
         }
 
-        updateButtonStates();
+        renderWorkspace();
+        updateControlStates();
     },
 
     setManualPingPending() {
         manualPingPending = true;
-        elements.actionResult.dataset.state = "pending";
-        elements.actionResult.textContent = "Measuring round trip…";
         setActionState(elements.pingButton, "processing");
-        updateButtonStates();
+        showFeedback("Measuring round trip…", "neutral", 0);
+        updateControlStates();
     },
 
     showPong(roundTripMilliseconds, source) {
@@ -325,11 +552,9 @@ export const dashboardUi = {
 
         if (source === "manual") {
             manualPingPending = false;
-            elements.actionResult.dataset.state = "success";
-            elements.actionResult.textContent = `Pong received in ${roundedLatency} ms.`;
             setActionState(elements.pingButton, "success");
-            this.addEvent(`Ping completed in ${roundedLatency} ms.`);
-            updateButtonStates();
+            showFeedback(`Round trip: ${roundedLatency} ms.`, "success", 2600);
+            updateControlStates();
         }
     },
 
@@ -338,11 +563,9 @@ export const dashboardUi = {
 
         if (source === "manual") {
             manualPingPending = false;
-            elements.actionResult.dataset.state = "failure";
-            elements.actionResult.textContent = "Ping timed out.";
             setActionState(elements.pingButton, "failure");
-            this.addEvent("Ping timed out.", "failure");
-            updateButtonStates();
+            showFeedback("Diagnostic ping timed out.", "failure", 7000);
+            updateControlStates();
         }
     },
 
@@ -351,8 +574,7 @@ export const dashboardUi = {
         elements.currentTime.dateTime = now.toISOString();
         elements.currentTime.textContent = now.toLocaleTimeString([], {
             hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit"
+            minute: "2-digit"
         });
         elements.contextAge.textContent = formatElapsed(contextChangedAt);
     }

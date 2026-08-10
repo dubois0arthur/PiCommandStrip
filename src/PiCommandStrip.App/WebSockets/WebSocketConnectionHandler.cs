@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
+using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
 
@@ -14,6 +15,7 @@ public sealed class WebSocketConnectionHandler(
     ForegroundStateStore foregroundStateStore,
     ContextStateCoordinator contextStateCoordinator,
     ContextCatalog contextCatalog,
+    IMediaSessionService mediaSessionService,
     IPcCommandDispatcher commandDispatcher,
     ClientAuthenticationService authenticationService,
     AuthenticationAttemptLimiter authenticationAttemptLimiter,
@@ -188,6 +190,7 @@ public sealed class WebSocketConnectionHandler(
                 await connection.InitializeStateAsync(
                     foregroundStateStore,
                     contextStateCoordinator,
+                    mediaSessionService,
                     messageFactory,
                     cancellationToken);
                 return;
@@ -271,7 +274,9 @@ public sealed class WebSocketConnectionHandler(
         else
         {
             result = await commandDispatcher.DispatchAsync(
-                commandRequest.Payload.CommandId,
+                new PcCommandInvocation(
+                    commandRequest.Payload.CommandId,
+                    commandRequest.Payload.PositionMilliseconds),
                 cancellationToken);
         }
 

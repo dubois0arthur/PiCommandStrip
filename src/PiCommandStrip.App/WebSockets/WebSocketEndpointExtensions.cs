@@ -1,17 +1,25 @@
 using PiCommandStrip.App.Contexts;
+using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.Protocol;
 
 namespace PiCommandStrip.App.WebSockets;
 
 public static class WebSocketEndpointExtensions
 {
-    public static IServiceCollection AddPiCommandStripWebSockets(this IServiceCollection services)
+    public static IServiceCollection AddPiCommandStripWebSockets(
+        this IServiceCollection services,
+        TimeSpan commandCooldown)
     {
         services.AddSingleton<ClientMessageParser>();
         services.AddSingleton<ServerMessageFactory>();
         services.AddSingleton<WebSocketMessageReader>();
-        services.AddSingleton<WebSocketConnectionManager>();
+        services.AddSingleton(services => new WebSocketConnectionManager(
+            services.GetRequiredService<ServerMessageFactory>(),
+            services.GetRequiredService<TimeProvider>(),
+            commandCooldown,
+            services.GetRequiredService<ILogger<WebSocketConnectionManager>>()));
         services.AddSingleton<IContextStateBroadcaster, WebSocketContextStateBroadcaster>();
+        services.AddSingleton<IMediaStateBroadcaster, WebSocketMediaStateBroadcaster>();
         services.AddTransient<WebSocketConnectionHandler>();
 
         return services;

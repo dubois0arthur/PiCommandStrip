@@ -5,6 +5,7 @@ public static class MessageTypes
     public const string ServerHello = "server_hello";
     public const string PcState = "pc_state";
     public const string ContextState = "context_state";
+    public const string MediaState = "media_state";
     public const string ContextSelectionResult = "context_selection_result";
     public const string CommandResult = "command_result";
     public const string Pong = "pong";

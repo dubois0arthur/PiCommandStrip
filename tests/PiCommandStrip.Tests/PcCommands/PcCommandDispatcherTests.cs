@@ -12,7 +12,7 @@ public sealed class PcCommandDispatcherTests
         var dispatcher = CreateDispatcher(new OpenNotepadCommandHandler(launcher));
 
         var result = await dispatcher.DispatchAsync(
-            PcCommandIds.OpenNotepad,
+            new PcCommandInvocation(PcCommandIds.OpenNotepad),
             CancellationToken.None);
 
         Assert.True(result.Succeeded);
@@ -26,7 +26,9 @@ public sealed class PcCommandDispatcherTests
         var launcher = new RecordingNotepadLauncher();
         var dispatcher = CreateDispatcher(new OpenNotepadCommandHandler(launcher));
 
-        var result = await dispatcher.DispatchAsync("open_calculator", CancellationToken.None);
+        var result = await dispatcher.DispatchAsync(
+            new PcCommandInvocation("open_calculator"),
+            CancellationToken.None);
 
         Assert.False(result.Succeeded);
         Assert.Equal("Command identifier is not allowlisted.", result.Message);
@@ -42,7 +44,7 @@ public sealed class PcCommandDispatcherTests
         var dispatcher = CreateDispatcher(handler);
 
         var result = await dispatcher.DispatchAsync(
-            PcCommandIds.OpenNotepad,
+            new PcCommandInvocation(PcCommandIds.OpenNotepad),
             CancellationToken.None);
 
         Assert.False(result.Succeeded);

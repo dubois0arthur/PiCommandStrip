@@ -7,18 +7,20 @@ Implemented features include:
 - repository-local HTML, CSS, and JavaScript dashboard;
 - `/health` HTTP endpoint and authenticated `/ws` native WebSocket endpoint;
 - Windows foreground-application detection with change-only broadcasts;
+- Windows system media-session discovery and normalized change-only state broadcasts;
+- capability-aware Windows media controls and a touch-oriented Now Playing interface;
 - generic Default, Media, Browser / Research, Gaming, and Audio context profiles;
 - automatic process-based context switching plus authenticated manual pinning;
-- server-allowlisted `open_notepad` command with a per-connection cooldown;
+- fixed server-allowlisted Notepad and media commands with a per-connection cooldown;
 - loopback-only development configuration and explicit LAN configuration; and
-- focused xUnit tests for protocol, authentication, commands, foreground state, and context selection.
+- focused xUnit tests for protocol, authentication, commands, foreground state, context selection, and normalized media state.
 
 Browser input cannot select a path, shell, script, arguments, or executable. LAN mode is intended only for a trusted Private network and currently uses unencrypted HTTP/WebSocket traffic.
 
 ## Prerequisites
 
 - .NET SDK `10.0.302`, pinned by `global.json`
-- Windows for foreground detection and Notepad execution
+- Windows 10 version 2004 or later for foreground detection, system media sessions, and Notepad execution
 
 No Node.js, npm, frontend packages, or application NuGet packages are required. The test-only packages are `Microsoft.NET.Test.Sdk`, `xunit`, and `xunit.runner.visualstudio`.
 
@@ -63,17 +65,19 @@ dotnet run --project src/PiCommandStrip.App/PiCommandStrip.App.csproj --no-build
 
 Open `http://localhost:5077`, enter the token, and press **Connect**. The page connects to `/ws` on the same origin. Press `Ctrl+C` to stop Kestrel gracefully.
 
-The dashboard is sized for the Raspberry Pi display's 1024x600 landscape CSS viewport. Add `?layoutDebug=1` to the URL, or press `Ctrl+Shift+D`, to outline the major interface regions and show the current viewport dimensions and device-pixel ratio. The shortcut can also close the overlay. This mode is local presentation tooling and does not alter WebSocket messages or command behavior.
+The dashboard is sized for the Raspberry Pi display's 1024x600 landscape CSS viewport. Add `?layoutDebug=1` to the URL, or press `Ctrl+Shift+D`, to outline the major interface regions and show the current viewport dimensions and device-pixel ratio. The shortcut can also close the overlay. For repeatable local layout checks, loopback URLs may also add `&layoutFixture=no-media` or `&layoutFixture=long-media`; these affect only rendered media state and cannot activate over a LAN hostname. This presentation tooling does not alter WebSocket messages or command behavior.
 
 ## Run for a Raspberry Pi client
 
 Follow [the LAN setup guide](docs/lan-setup.md). LAN mode is not selected by `launchSettings.json`; it requires an explicit LAN-enabled setting, a concrete PC address, and the token supplied outside Git.
 
-Do not create a shortcut directly to `bin\Release\net10.0\PiCommandStrip.App.exe`. That folder is a build output used by development and does not contain the deployable static dashboard files. Use `dotnet run` from the project directory while developing, or create a published deployment folder before making a shortcut.
+Do not create a shortcut directly to `bin\Release\net10.0-windows10.0.19041.0\PiCommandStrip.App.exe`. That folder is a build output used by development and does not contain the deployable static dashboard files. Use `dotnet run` from the project directory while developing, or create a published deployment folder before making a shortcut.
 
-## Available command
+## Available commands
 
-The dashboard sends only the fixed identifier `open_notepad`. The server maps it to a dedicated handler that starts Notepad from the Windows system directory with shell execution disabled and no arguments. Unknown identifiers execute nothing.
+The server allowlist contains `open_notepad`, `media.play`, `media.pause`, `media.playPause`, `media.previous`, `media.next`, and `media.seek`. Notepad uses its dedicated fixed launcher. Media commands call only `IMediaSessionService`; seek is the sole parameterized command and accepts one validated millisecond position. Unknown identifiers execute nothing.
+
+Each dashboard connection has a 750 ms command cooldown to prevent accidental double taps. Adjust it with `PiCommandStrip:Commands:CooldownMilliseconds` in external configuration (or `PiCommandStrip__Commands__CooldownMilliseconds` as an environment variable). Values from 100 through 10,000 ms are accepted.
 
 ## Context mappings
 
@@ -81,7 +85,15 @@ Automatic context selection reads the foreground process already observed by the
 
 The initial mappings are Spotify → Media and Firefox/Chrome/Edge → Browser / Research. Add game process names to the `gaming` array. Default is the implicit fallback, so it is not configured as a process mapping. Audio is available for manual selection but has no automatic integration yet.
 
-The dashboard selector can pin any catalog context or return to Automatic. A pin applies to all authenticated dashboards, survives WebSocket reconnects, and resets when the host process restarts.
+The compact header opens System Details, where the context selector can pin any catalog context or return to Automatic. Home returns directly to Automatic and Media pins the Media context. A pin applies to all authenticated dashboards, survives WebSocket reconnects, and resets when the host process restarts.
+
+## Windows media sessions
+
+The host follows the current session selected by Windows System Media Transport Controls and publishes normalized metadata, playback state, timeline, supported-control flags, and an optional local artwork URL over WebSocket. Spotify and browser media such as YouTube can appear when those applications expose a Windows media session. Playback does not affect context selection: the existing foreground-process mappings remain authoritative.
+
+Media is the primary workspace in Media context and in Default when no more useful context capability exists. Browser-owned media is also promoted while Browser / Research is active; when another context has higher-value content, the same state renders as a compact persistent strip. Both presentations share the same component logic, provide a deliberate no-art fallback, support capability-aware playback buttons and touch seeking, and advance progress locally between server corrections. Artwork is read only from the Windows media session, kept in a bounded one-entry memory cache, and served by the local host; Spotify Web API and external image requests are not used.
+
+The normal interface is a compact status header, one dynamic workspace, and a small Home/Media/More navigation row. Foreground process is supporting metadata rather than the main panel. PID, context age, manual RTT, and manual context selection live in System Details. Prototype Notepad and latency cards are no longer primary controls; ordinary command outcomes appear as accessible transient feedback instead of permanent result panels.
 
 ## Project layout
 

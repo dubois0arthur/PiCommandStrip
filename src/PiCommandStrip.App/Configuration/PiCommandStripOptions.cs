@@ -8,6 +8,8 @@ public sealed class PiCommandStripOptions
 
     public AuthenticationOptions Authentication { get; init; } = new();
 
+    public CommandOptions Commands { get; init; } = new();
+
     public ContextOptions Contexts { get; init; } = new();
 }
 
@@ -23,6 +25,11 @@ public sealed class NetworkOptions
 public sealed class AuthenticationOptions
 {
     public string Token { get; init; } = string.Empty;
+}
+
+public sealed class CommandOptions
+{
+    public int CooldownMilliseconds { get; init; } = 750;
 }
 
 public sealed class ContextOptions
@@ -50,6 +57,14 @@ public sealed record ValidatedNetworkOptions(bool LanEnabled, IPAddress ListenAd
 
 public static class PiCommandStripOptionsValidator
 {
+    public static TimeSpan ValidateCommandCooldown(CommandOptions options)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.CooldownMilliseconds, 100);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(options.CooldownMilliseconds, 10_000);
+
+        return TimeSpan.FromMilliseconds(options.CooldownMilliseconds);
+    }
+
     public static ValidatedNetworkOptions ValidateNetwork(NetworkOptions options)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(options.Port, 1024);

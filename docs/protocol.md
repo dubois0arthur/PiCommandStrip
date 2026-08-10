@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 3 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 6 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, foreground-window and resolved-context publication, automatic/manual context selection, structured errors, and one allowlisted PC command: `open_notepad`. Version 3 retains the version 2 authentication and command safety model but is intentionally versioned because it adds client and server message types.
+This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, and Windows system media-state publication, automatic/manual context selection, structured errors, and fixed allowlisted Notepad/media commands. Version 6 retains version 5 media controls and adds a local content-addressed artwork reference to media state; artwork bytes remain outside WebSocket messages.
 
 ## Transport
 
@@ -52,17 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "3",
+    "protocolVersion": "6",
     "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `3`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `6`.
 - `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
 
-The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 3 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 6 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -112,7 +112,7 @@ Manual mode has exactly `mode` and `contextId`:
 
 ### `command_request`
 
-Carries only a fixed command identifier. It never contains a shell command, executable path, script, arguments, or executable object. The payload must contain exactly one property named `commandId`; additional properties are rejected.
+Carries a fixed allowlisted command identifier. It never contains a shell command, executable path, script, argument list, or executable object. All commands except `media.seek` have exactly one payload property named `commandId`; additional properties are rejected.
 
 ```json
 {
@@ -125,7 +125,31 @@ Carries only a fixed command identifier. It never contains a shell command, exec
 }
 ```
 
-`commandId` is required, non-blank, and at most 100 characters. `open_notepad` is the only allowlisted value. It maps internally to a dedicated handler with no command parameters. Unknown identifiers execute nothing and receive a failed `command_result`. A connection may attempt one command every two seconds; faster attempts receive a rate-limit result.
+The allowlisted identifiers are:
+
+- `open_notepad`
+- `media.play`
+- `media.pause`
+- `media.playPause`
+- `media.previous`
+- `media.next`
+- `media.seek`
+
+`media.seek` is the only parameterized command and has exactly this shape:
+
+```json
+{
+  "type": "command_request",
+  "messageId": "b227745c-5d58-4859-92fb-b5586c685b13",
+  "timestampUtc": "2026-08-10T12:00:02.000Z",
+  "payload": {
+    "commandId": "media.seek",
+    "positionMilliseconds": 42500
+  }
+}
+```
+
+`positionMilliseconds` must be a non-negative JSON integer. The server validates it again against the live media session's seek capability, duration, and seek range before converting the relative position to Windows timeline ticks. Unknown identifiers execute nothing and receive a failed `command_result`. A connection may attempt one command every two seconds; faster attempts receive a rate-limit result.
 
 ## Server-to-client messages
 
@@ -140,7 +164,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "3",
+    "protocolVersion": "6",
     "maximumMessageSizeBytes": 16384,
     "availableContexts": [
       { "contextId": "default", "displayName": "Default" },
@@ -238,6 +262,45 @@ Reports the effective profile and the foreground evidence used by context policy
 
 `activeSinceUtc` records when the effective context ID became active. It is preserved while a title changes, while two processes resolve to the same context, and while a manual pin observes new foreground windows. It changes when the effective context ID changes.
 
+### `media_state`
+
+Reports the normalized state of the session that Windows considers current. It is sent after the retained foreground and context snapshots when a client authenticates, then whenever session identity, metadata, playback state, timeline, or advertised control capabilities meaningfully change.
+
+```json
+{
+  "type": "media_state",
+  "messageId": "e3da68ce-54ec-46d6-94d2-cb597fca00d5",
+  "timestampUtc": "2026-08-10T12:00:03.0500000+00:00",
+  "payload": {
+    "hasActiveSession": true,
+    "sessionSourceIdentifier": "Spotify.exe",
+    "sourceName": "Spotify",
+    "title": "Example track",
+    "artist": "Example artist",
+    "albumTitle": "Example album",
+    "artworkUrl": "/media/artwork/4f8c7b6a0c8f5b2a3d57f4057b7d8b51e458915a765eada0b70f19528e4a9db0",
+    "playbackState": "playing",
+    "positionMilliseconds": 84250,
+    "totalDurationMilliseconds": 232000,
+    "supportsPrevious": true,
+    "supportsNext": true,
+    "supportsPlay": false,
+    "supportsPause": true,
+    "supportsPlayPause": true,
+    "supportsSeeking": true,
+    "lastUpdatedUtc": "2026-08-10T12:00:03.0490000+00:00"
+  }
+}
+```
+
+`sessionSourceIdentifier` is the source application identifier supplied by Windows; `sourceName` is a short display-oriented name derived from it. Metadata fields are nullable because applications may expose only some values. Playback state is `closed`, `opened`, `changing`, `stopped`, `playing`, `paused`, or `unknown`; `none` is used when there is no current session. Positions and durations are nullable non-negative milliseconds. Reported positions are clamped to a known duration. Capability flags are authoritative hints for rendering controls; the server re-reads live capability data before every media command.
+
+`artworkUrl` is either `null` or a same-origin `/media/artwork/{sha256-id}` path. The WebSocket never embeds image bytes or a filesystem path. The HTTP endpoint serves only the single currently cached bitmap ID, rejects malformed IDs, limits source artwork to 5 MiB, and returns `404` after the artwork is replaced or cleared. Clients may cache a successful content-addressed response using its ETag.
+
+When no session is current, `hasActiveSession` is `false`, the identifier, source, metadata, position, and duration fields are `null`, every capability is `false`, and playback state is `none`. A timestamp-only refresh is not broadcast. While playback is active, the host performs a low-frequency timeline resync in addition to reacting to Windows events, so position changes may be published even when metadata and playback state are stable.
+
+Media state is independent of `context_state` and is available in every context. Playing media does not select Media context. Foreground Spotify can still map to Media through process configuration, while foreground Firefox, Chrome, or Edge remains Browser / Research even when its current media session represents YouTube.
+
 ### `context_selection_result`
 
 Correlates the outcome of a `context_selection_request`. A valid request receives a successful result even if that mode/context was already active; state is broadcast only when its meaningful value changed.
@@ -301,7 +364,9 @@ The connection handler then switches over those known records. Before it accepts
 
 Context selection is separate from command dispatch. The parser creates a data-only `ContextSelectionRequestMessage`; `ContextStateStore` resolves its fixed catalog ID or rejects it. It cannot supply process mappings, paths, scripts, commands, or profile definitions.
 
-A `command_request` is only a `CommandRequestMessage` containing a bounded identifier. `PcCommandDispatcher` resolves that identifier through its server-created dictionary of `IPcCommandHandler` instances. The only registered handler is `OpenNotepadCommandHandler`; it accepts no payload values and calls a Notepad-specific launcher. The browser never supplies the executable path.
+A `command_request` becomes a bounded `PcCommandInvocation`. `PcCommandDispatcher` resolves its fixed identifier through a server-created dictionary of `IPcCommandHandler` instances. `OpenNotepadCommandHandler` accepts no payload value and calls a Notepad-specific launcher. Fixed `MediaCommandHandler` registrations call only `IMediaSessionService`; the browser cannot supply an executable path, Windows API name, or arbitrary argument.
+
+The parser permits `positionMilliseconds` only with `media.seek`. The media handler validates its numeric range, and the Windows implementation requires a current session, a seek-enabled live capability, a valid timeline, and a position inside both the duration and advertised seek range. A session that disappears during a request produces a safe failed `command_result`.
 
 The Notepad launcher combines the server's trusted Windows system directory with the fixed filename `notepad.exe` and calls `Process.Start` with `UseShellExecute` disabled. Unknown identifiers, extra command payload fields, and attempts during the per-connection cooldown are rejected before process launch.
 
@@ -310,10 +375,10 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` with protocol version 3, its fresh UTC timestamp, and the configured token.
+4. The dashboard sends `client_hello` with protocol version 6, its fresh UTC timestamp, and the configured token.
 5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
-6. Only after successful authentication does the server mark the connection ready and send retained `pc_state` followed by `context_state`.
-7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground and context changes are broadcast independently.
+6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, and `media_state` snapshots in that order.
+7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, and media changes are broadcast independently.
 8. The server reads complete messages, validates them, and dispatches only recognized typed records.
 9. Either peer may initiate the normal WebSocket close handshake.
 10. Application shutdown cancels active receive and polling operations and attempts a bounded close before releasing each socket.

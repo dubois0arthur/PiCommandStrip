@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture through the generic context/profile milestone. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 3 adds automatic context resolution and authenticated manual context selection while retaining the version 2 authentication, command, foreground-monitoring, reconnection, and LAN boundaries.
+This document describes the architecture through the context-aware touchscreen workspace and local media-artwork support. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 6 adds a bounded local artwork reference on top of the version 5 media controls. The dashboard hierarchy is a frontend-only refinement and retains authentication, foreground monitoring, context selection, reconnection, command security, and LAN boundaries.
 
 ## System shape
 
@@ -13,17 +13,15 @@ Windows PC
 +------------------------------------------------------------------+
 | ASP.NET Core host                                                |
 |                                                                  |
-|  Foreground monitor --> foreground store --> WebSocket endpoint  |
-|       |                       |                    ^             |
-|       v                       v                    |             |
-|  Win32 adapter       context resolver --> context state <--------|
-|                                                  <--> Dashboard  |
+|  Win32 adapter --> foreground monitor --> foreground store ------|
+|                         |                                        |
+|                         +--> context resolver --> context store --+--> WebSocket <--> Dashboard
+|                                                                  |
+|  Windows media manager --> media service --> media store --------|
 |                                  |                               |
-|                                  v                               |
-|                         command dispatcher                       |
-|                                  |                               |
-|                                  v                               |
-|                       fixed command allowlist                    |
+|                                  +--> artwork cache --> HTTP -----|
+|                                                                  |
+|  fixed command allowlist <--> command dispatcher ----------------|
 +------------------------------------------------------------------+
 ```
 
@@ -71,14 +69,32 @@ The default mappings classify `spotify` as Media and `firefox`, `chrome`, and `m
 
 `ContextSignals` is intentionally a small wrapper rather than making the resolver depend directly on Win32 detection. Future fields can represent media sessions, audio sessions, or a running game without changing the foreground adapter or WebSocket transport. Manual selection remains selection policy above automatic resolution; this is not a plugin framework.
 
+### Windows media-session service
+
+- `IMediaSessionService` exposes the latest platform-neutral `MediaState`; consumers do not depend on WinRT types.
+- `WindowsMediaSessionService` is the only component that imports `Windows.Media.Control`. It requests `GlobalSystemMediaTransportControlsSessionManager`, enumerates available sessions, and follows the session returned by `GetCurrentSession()`.
+- Manager `SessionsChanged` and `CurrentSessionChanged` events handle applications appearing, disappearing, and Windows changing its preferred session. The selected session's media-properties, playback-info, and timeline events request a refreshed snapshot.
+- `MediaStateNormalizer` converts incomplete platform data into nullable strings/timelines, fixed playback-state identifiers, clamped positions, and explicit capability flags.
+- `MediaStateStore` retains the latest value and suppresses changes that differ only by observation timestamp. The WebSocket connection also performs per-client meaning-based deduplication.
+- Media properties expose optional artwork as a WinRT `IRandomAccessStreamReference`. The service opens it only for an initial/current-session read or after `MediaPropertiesChanged`; the five-second position refresh reuses the current artwork ID.
+- `MediaArtworkCache` accepts only supported raster MIME types, rejects empty or larger-than-5-MiB values, creates a SHA-256 content ID, and retains one defensive copy in memory. Replacing the current artwork or losing the session immediately evicts the previous bytes.
+- `/media/artwork/{id}` serves only the cache entry matching a valid generated ID with `ETag`, private immutable caching, and `X-Content-Type-Options: nosniff`. It never reads a path, touches disk, or proxies an external URL.
+- While a session is playing, a five-second timer refreshes the extrapolated timeline position. It does not poll the media API while paused or inactive; identity, metadata, playback, and capability changes remain event-driven.
+- The same service implements fixed play, pause, play/pause, previous, next, and seek methods. Each operation asks the manager for Windows' current session again, reads live capability data, and catches session-disappearance races.
+- Seeking accepts a normalized position relative to the displayed timeline. The Windows adapter verifies duration and advertised seek bounds, adds the session's timeline start, and passes the resulting ticks to `TryChangePlaybackPositionAsync`.
+
+The Windows API may expose Spotify, packaged media players, and browser tabs such as YouTube when the application publishes System Media Transport Controls. It does not guarantee that every media application or browser configuration participates or supplies artwork. Missing metadata/artwork and session-level failures become partial or inactive state and are logged without terminating the host.
+
+Media is a parallel global signal, not an input to the current foreground-process resolver. Every authenticated client receives it regardless of active context. Playback alone cannot force Media context: Spotify remains Media only when Spotify is foreground through the existing mapping, and a foreground browser remains Browser / Research while browser media is playing.
+
 ### State and connection coordinator
 
-- Retains the latest foreground and context states so a newly authenticated dashboard receives both immediate snapshots.
+- Retains the latest foreground, context, and media states so a newly authenticated dashboard receives all three immediate snapshots.
 - Tracks active WebSocket connections needed for broadcasting.
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
 
-The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground and context snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
+The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, and media snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
 
 ### WebSocket endpoint and protocol
 
@@ -89,7 +105,7 @@ The implementation separates the latest-state stores from a `ConcurrentDictionar
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 3 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state` and `context_state` snapshots. Later foreground changes can update both; manual selection updates `context_state` independently.
+The implemented version 6 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, and `media_state` snapshots. Later foreground changes can update the first two, manual selection updates `context_state` independently, and Windows media events update `media_state` independently.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -100,31 +116,38 @@ A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-dup
 - Rejects identifiers that are not in the mapping.
 - Invokes a narrow handler with a cancellation token.
 - Produces a structured success or failure result suitable for display and logging.
-- Applies a two-second cooldown independently to each WebSocket connection.
+- Applies the configured command cooldown (750 ms by default) independently to each WebSocket connection.
 
-The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, or arbitrary argument list. The only registered identifier is `open_notepad`. Its handler calls an `INotepadLauncher` that constructs the fixed Notepad location internally and disables shell execution. Adding a command requires a code change and review on the PC side.
+The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, or arbitrary argument list. Registered identifiers are `open_notepad`, `media.play`, `media.pause`, `media.playPause`, `media.previous`, `media.next`, and `media.seek`. Notepad still uses its narrow launcher. Media handlers operate only through `IMediaSessionService`; five carry no parameters, while seek accepts only one validated integer millisecond position. Adding any other command still requires a server code change and review.
 
 `IPcCommandDispatcher` and `IPcCommandHandler` provide test seams. Handler failures are caught at the dispatcher boundary and converted to fixed browser-safe text; exception types may be logged, but exception messages and stack traces are not sent to the dashboard.
 
 ### Browser dashboard
 
 - Uses repository-local plain HTML, CSS, and JavaScript.
-- Keeps active context, connection state, measured round-trip latency, and local time in a persistent status header.
-- Gives the foreground process visual priority, with the title, process ID, and elapsed context age nearby.
-- Places large allowlisted action buttons in a dedicated touch-oriented action rail.
-- Keeps the latest command result, highest-priority warning, and primary-view navigation override in a persistent utility rail.
+- Uses three stable shell regions at the 1024x600 target: a 64-pixel status header, a flexible dynamic workspace, and a 68-pixel navigation row. The document itself does not scroll at the target viewport.
+- Keeps active context, foreground process, connection/authentication state, measured round-trip latency, and local time in the compact header. Foreground process is supporting evidence rather than workspace content; its window title remains available as a tooltip and PID/context age move to diagnostics.
+- Chooses the workspace presentation from existing context and media state. Media is expanded for Media context and for Default when no more valuable capability exists. Browser-owned media is expanded in Browser / Research; other contexts retain their own workspace with compact media below it.
+- Treats browser media ownership conservatively: a recognizable source application is preferred, with foreground-window/media-title matching as a fallback for browsers that publish an opaque Windows AppUserModelId.
+- Provides a reusable compact touch-action grid for context-owned commands. The current production grid contains only a System Details entry; prototype Notepad and manual latency actions no longer consume primary workspace area. Their server command/diagnostic behavior remains available without weakening the allowlist.
+- Uses a compact bottom navigation seam for Home/Automatic, Media, and More/System. Unfinished Audio and other destinations are not exposed as fake pages. The context header and More button open the same diagnostics sheet, which contains manual context selection and technical details.
 - Connects to the WebSocket endpoint and displays connecting, connected, disconnected, and retrying states.
-- Renders the resolved context alongside the current process name and window title.
-- Populates its context selector from the server catalog and can pin a context or return to automatic selection.
+- Renders one reusable Now Playing template/controller in two hosts: expanded as the primary workspace when media has the highest value, and compact beneath another context's higher-value workspace. Both variants receive the same normalized state, command callback, capability logic, artwork fallback, seek logic, and progress baseline. Keeping paused sessions visible preserves the user's path to resume playback.
+- Shows prominent square-cropped artwork in Media context and a small compact thumbnail only when available. A deliberate local fallback occupies the expanded artwork region; text remains on an opaque surface so extreme artwork brightness cannot reduce readability.
+- Displays generic media title, artist when available, source application, capability-aware transport controls, current/total time, and a touch-friendly seek range without assuming every item is music.
+- Advances the displayed playing position locally with `requestAnimationFrame` from the latest server baseline. Five-second server refreshes correct drift; pausing or a new state resets the baseline.
+- Populates the diagnostics context selector from the server catalog. Home sends the existing automatic-selection request, Media pins the existing Media context, and the diagnostics selector can pin any catalog context.
 - Sends only a fixed command identifier selected by a known UI control, plus a generated request ID for correlation.
-- Displays pressed, disabled, processing, success, rejected, and failed command states without relying on hover.
+- Displays pressed, disabled, and processing control states without relying on hover. Ordinary successful results are short-lived accessible toasts; failures remain longer, and status text is also announced through a live region so meaning never depends on color alone.
 - Reconnects with a bounded delay after an unexpected disconnect.
 - Prompts for the pre-shared token and retains it only in browser `sessionStorage`; it is not part of the frontend source.
 - Uses a 1024x600 landscape layout with large touch targets and no hover dependency.
-- Uses a high-contrast cyberpunk telemetry theme built entirely from local CSS, system fonts, gradients, and static geometric patterns; it has no image, font, CDN, or animation dependency.
-- Provides a developer layout overlay through `?layoutDebug=1` or `Ctrl+Shift+D`; the overlay reports the CSS viewport and device-pixel ratio without changing protocol behavior.
+- Uses a restrained cyberdeck telemetry theme built from local CSS, system fonts, low-contrast gradients, and a subtle grid. Optional media-session artwork is fetched only from the same PiCommandStrip host; there is no external image, font, CDN, or animation dependency.
+- Provides a developer layout overlay through `?layoutDebug=1` or `Ctrl+Shift+D`; the overlay reports the CSS viewport and device-pixel ratio without changing protocol behavior. On loopback only, `layoutFixture=no-media` and `layoutFixture=long-media` can be combined with `layoutDebug=1` to inspect otherwise transient media layouts without altering server state or protocol messages.
 
-The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, and `ui.js` owns DOM rendering, context selection, clock/context-age updates, control availability, persistent feedback, and layout debugging. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
+The dynamic workspace is the extension seam for the upcoming Audio page. Context definitions select workspace copy/actions without creating separate page shells, the action grid accepts two or three compact controls as capabilities arrive, and compact media already composes beneath a higher-value surface. A future mixer can therefore supply master/device/application controls to the existing workspace and expose a smaller gaming subset without duplicating the header, navigation, feedback, or media systems.
+
+The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, `ui.js` owns the overall shell, and `now-playing.js` owns reusable media rendering, local progress, and touch interaction. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
 
 Client-side fixed buttons improve usability, but they are not a security boundary. The server must validate every message and enforce its own allowlist because browser traffic can be modified.
 
@@ -143,8 +166,18 @@ The finalized, direction-specific UTF-8 JSON envelopes and payload examples are 
 5. The monitor then gives the same typed observation to `ContextStateCoordinator`; no process-name policy exists in Win32 code or the polling service.
 6. In automatic mode, the resolver selects a mapped profile or Default fallback. In manual mode, the pin stays effective while foreground process/title evidence continues to update.
 7. Changed context state is retained and broadcast as `context_state`. Its activation timestamp changes only when the effective context ID changes, not for a title change or polling timestamp.
-8. Dashboard JavaScript renders the active profile, selection mode, foreground details, and context age.
+8. Dashboard JavaScript renders the active profile and compact foreground evidence in the header, then selects the most valuable workspace presentation from context and media state. PID and context age are available only in diagnostics.
 9. A newly authenticated dashboard receives both retained values immediately rather than waiting for the next window switch.
+
+### Media state
+
+1. At host startup, `WindowsMediaSessionService` requests the system media-session manager and enumerates the sessions currently known to Windows.
+2. The service asks Windows for its current session, attaches event handlers to that session, and reads source ID, metadata, playback info, timeline, supported controls, and the optional thumbnail stream.
+3. Valid thumbnail bytes replace the one-entry in-memory artwork cache and produce a SHA-256 ID. No thumbnail, a failed read, an unsupported MIME type, an oversized image, or a session switch clears the cache.
+4. Each platform value is mapped to `MediaSessionSnapshot`, then normalized into `MediaState`. Missing fields remain `null`; one broken property read does not discard other available data.
+5. The store compares semantic fields, including artwork ID, and retains only meaningful changes. Changed state is broadcast as `media_state` with a small local artwork URL; a newly authenticated connection receives the retained state even when no media is active.
+6. Manager events switch subscriptions when applications or the current session change. Media-property events permit a new thumbnail read. A five-second playing-only refresh advances position while reusing the current artwork ID.
+7. Media state never calls the context coordinator. Context continues to resolve from foreground process or a manual pin.
 
 ### Context selection
 
@@ -161,11 +194,11 @@ Pins are intentionally in-memory and server-wide for this single-user, shared-to
 ### Command round trip
 
 1. The user presses a known dashboard button.
-2. JavaScript creates a unique request ID and sends a `command_request` containing only that ID and the button's fixed command ID.
+2. JavaScript creates a unique request ID and sends a `command_request` containing its fixed command ID. Only `media.seek` also carries a non-negative integer position in milliseconds.
 3. The endpoint checks message size, JSON shape, message type, and required fields.
-4. The dispatcher looks up the command ID in its explicit allowlist.
+4. The dispatcher looks up the command ID in its explicit allowlist. Media handlers then invoke only the corresponding `IMediaSessionService` method.
 5. If absent, the dispatcher returns a rejected result and executes nothing.
-6. If present, the associated narrow handler runs with cancellation support.
+6. If present, the associated narrow handler runs with cancellation support. Media commands re-check the current Windows session and live capabilities; seek additionally validates the live timeline and range.
 7. The endpoint sends a correlated `command_result` to the requesting dashboard.
 8. JavaScript matches the result by request ID and displays the outcome.
 
@@ -189,13 +222,20 @@ The first automated tests should focus on behavior that can run without an inter
 - foreground changes publish once while duplicate samples do not;
 - configured process mappings resolve to the expected profile and unknown processes fall back to Default;
 - automatic context changes, manual pinning, and returning to automatic mode preserve the expected state;
+- incomplete media metadata normalizes safely, positions are bounded, and reported capabilities are preserved;
+- timestamp-only media refreshes are suppressed while meaningful metadata, playback, position, and active/inactive changes are retained;
+- artwork cache IDs are stable for identical bytes, stale IDs are evicted, malformed path-like IDs are rejected, MIME types are constrained, and memory input is bounded;
+- authenticated connections receive the current media snapshot;
+- media command IDs dispatch only to their corresponding `IMediaSessionService` operations;
+- invalid, missing, fractional, or unexpected seek parameters are rejected before dispatch;
+- validated seek positions reach the media service as a `TimeSpan`, and session-disappearance failures remain safe command results;
 - cancellation stops the monitoring loop and command handlers.
 
-The real Win32 adapter needs a small amount of focused integration or manual testing on Windows. Most other logic should depend on interfaces and plain data types so it can be tested deterministically.
+The real Win32 foreground adapter and WinRT media adapter need a small amount of focused integration or manual testing on Windows. Most other logic depends on interfaces and plain data types so it can be tested deterministically.
 
 ## Dependency plan
 
-No external application NuGet or frontend packages are currently required. ASP.NET Core hosting, dependency injection, logging, background services, JSON serialization, static files, and WebSockets are included in the .NET shared framework. The browser provides the WebSocket API and DOM APIs. Windows interop is available through .NET P/Invoke.
+No explicit external application NuGet or frontend packages are required. The app and tests target `net10.0-windows10.0.19041.0`. On modern .NET, that Windows-specific target framework makes the SDK supply the Windows SDK reference/projection assets required to consume inbox WinRT APIs such as `Windows.Media.Control`; `Microsoft.Windows.SDK.Contracts`, `Microsoft.Windows.CsWinRT`, and Windows App SDK are not application dependencies. Foreground interop continues to use built-in .NET P/Invoke.
 
 The installed stable .NET SDK is pinned with `global.json`. The test project uses `Microsoft.NET.Test.Sdk` to host test execution, `xunit` for the test API and assertions, and `xunit.runner.visualstudio` for test discovery through the .NET and Visual Studio test platform.
 

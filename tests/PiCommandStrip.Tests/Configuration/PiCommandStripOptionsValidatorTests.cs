@@ -5,6 +5,32 @@ namespace PiCommandStrip.Tests.Configuration;
 
 public sealed class PiCommandStripOptionsValidatorTests
 {
+    [Theory]
+    [InlineData(100, 100)]
+    [InlineData(750, 750)]
+    [InlineData(10_000, 10_000)]
+    public void ValidateCommandCooldown_ReturnsConfiguredDuration(int milliseconds, double expectedMilliseconds)
+    {
+        var duration = PiCommandStripOptionsValidator.ValidateCommandCooldown(new CommandOptions
+        {
+            CooldownMilliseconds = milliseconds
+        });
+
+        Assert.Equal(expectedMilliseconds, duration.TotalMilliseconds);
+    }
+
+    [Theory]
+    [InlineData(99)]
+    [InlineData(10_001)]
+    public void ValidateCommandCooldown_RejectsUnsafeValues(int milliseconds)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PiCommandStripOptionsValidator.ValidateCommandCooldown(new CommandOptions
+            {
+                CooldownMilliseconds = milliseconds
+            }));
+    }
+
     [Fact]
     public void ValidateNetwork_DevelopmentModeAcceptsOnlyLoopback()
     {

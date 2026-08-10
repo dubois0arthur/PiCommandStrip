@@ -2,7 +2,7 @@ namespace PiCommandStrip.App.PcCommands;
 
 public sealed class PcCommandCooldown
 {
-    public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan DefaultDuration = TimeSpan.FromMilliseconds(750);
 
     private readonly Lock _sync = new();
     private readonly TimeProvider _timeProvider;

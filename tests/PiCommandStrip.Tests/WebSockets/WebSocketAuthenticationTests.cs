@@ -6,6 +6,7 @@ using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.Configuration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
+using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
 using PiCommandStrip.App.WebSockets;
@@ -29,6 +30,7 @@ public sealed class WebSocketAuthenticationTests
         Assert.True(fixture.Connection.IsAuthenticated);
         Assert.Contains(MessageTypes.PcState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.ContextState, fixture.Socket.SentMessageTypes);
+        Assert.Contains(MessageTypes.MediaState, fixture.Socket.SentMessageTypes);
     }
 
     [Fact]
@@ -87,6 +89,18 @@ public sealed class WebSocketAuthenticationTests
 
         Assert.Equal(1, fixture.CommandDispatcher.DispatchCount);
         Assert.Equal(PcCommandIds.OpenNotepad, fixture.CommandDispatcher.LastCommandId);
+        Assert.Contains(MessageTypes.CommandResult, fixture.Socket.SentMessageTypes);
+    }
+
+    [Fact]
+    public async Task MediaSeek_AfterAuthentication_DispatchesTypedPosition()
+    {
+        var fixture = CreateFixture(ClientHello(ValidToken), MediaSeekRequest(42_500));
+
+        await fixture.RunAsync();
+
+        Assert.Equal(PcCommandIds.MediaSeek, fixture.CommandDispatcher.LastCommandId);
+        Assert.Equal(42_500, fixture.CommandDispatcher.LastPositionMilliseconds);
         Assert.Contains(MessageTypes.CommandResult, fixture.Socket.SentMessageTypes);
     }
 
@@ -155,6 +169,7 @@ public sealed class WebSocketAuthenticationTests
             new ForegroundStateStore(timeProvider),
             contextCoordinator,
             contextCatalog,
+            new StubMediaSessionService(timeProvider),
             commandDispatcher,
             new ClientAuthenticationService(ValidToken, timeProvider),
             new AuthenticationAttemptLimiter(timeProvider),
@@ -188,6 +203,13 @@ public sealed class WebSocketAuthenticationTests
         CreateEnvelope(MessageTypes.CommandRequest, CurrentTime, new
         {
             commandId = PcCommandIds.OpenNotepad
+        });
+
+    private static byte[] MediaSeekRequest(long positionMilliseconds) =>
+        CreateEnvelope(MessageTypes.CommandRequest, CurrentTime, new
+        {
+            commandId = PcCommandIds.MediaSeek,
+            positionMilliseconds
         });
 
     private static byte[] ContextSelection(string contextId) =>
@@ -225,19 +247,57 @@ public sealed class WebSocketAuthenticationTests
         }
     }
 
+    private sealed class StubMediaSessionService(TimeProvider timeProvider) : IMediaSessionService
+    {
+        public MediaState Current { get; } = MediaState.Inactive(timeProvider.GetUtcNow());
+
+        public Task<MediaSessionCommandResult> PlayAsync(CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<MediaSessionCommandResult> PauseAsync(CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<MediaSessionCommandResult> TogglePlayPauseAsync(
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<MediaSessionCommandResult> SkipPreviousAsync(
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<MediaSessionCommandResult> SkipNextAsync(
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<MediaSessionCommandResult> SeekAsync(
+            TimeSpan position,
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        private static Task<MediaSessionCommandResult> NotAvailable(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(MediaSessionCommandResult.Failure("No active media session."));
+        }
+    }
+
     private sealed class RecordingCommandDispatcher : IPcCommandDispatcher
     {
         public int DispatchCount { get; private set; }
 
         public string? LastCommandId { get; private set; }
 
+        public long? LastPositionMilliseconds { get; private set; }
+
         public Task<PcCommandExecutionResult> DispatchAsync(
-            string commandId,
+            PcCommandInvocation invocation,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             DispatchCount++;
-            LastCommandId = commandId;
+            LastCommandId = invocation.CommandId;
+            LastPositionMilliseconds = invocation.PositionMilliseconds;
             return Task.FromResult(PcCommandExecutionResult.Success("Command completed."));
         }
     }
