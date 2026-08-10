@@ -95,19 +95,21 @@ The allowlist is the central safety boundary. Browser-provided values must never
 ### Browser dashboard
 
 - Uses repository-local plain HTML, CSS, and JavaScript.
-- Keeps connection state, measured round-trip latency, and local time in a persistent status header.
+- Keeps active context, connection state, measured round-trip latency, and local time in a persistent status header.
 - Gives the foreground process visual priority, with the title, process ID, and elapsed context age nearby.
 - Places large allowlisted action buttons in a dedicated touch-oriented action rail.
-- Retains at most eight recent connection, context, ping, and command events so the activity log cannot grow without bound.
+- Keeps the latest command result, highest-priority warning, and primary-view navigation override in a persistent utility rail.
 - Connects to the WebSocket endpoint and displays connecting, connected, disconnected, and retrying states.
 - Renders the current process name and window title.
 - Sends only a fixed command identifier selected by a known UI control, plus a generated request ID for correlation.
-- Displays pending, success, rejected, and failed command outcomes.
+- Displays pressed, disabled, processing, success, rejected, and failed command states without relying on hover.
 - Reconnects with a bounded delay after an unexpected disconnect.
 - Prompts for the pre-shared token and retains it only in browser `sessionStorage`; it is not part of the frontend source.
 - Uses a 1024x600 landscape layout with large touch targets and no hover dependency.
+- Uses a high-contrast cyberpunk telemetry theme built entirely from local CSS, system fonts, gradients, and static geometric patterns; it has no image, font, CDN, or animation dependency.
+- Provides a developer layout overlay through `?layoutDebug=1` or `Ctrl+Shift+D`; the overlay reports the CSS viewport and device-pixel ratio without changing protocol behavior.
 
-The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, and `ui.js` owns DOM rendering, clock/context-age updates, control availability, and the bounded event log.
+The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, and `ui.js` owns DOM rendering, clock/context-age updates, control availability, persistent feedback, and layout debugging.
 
 Client-side fixed buttons improve usability, but they are not a security boundary. The server must validate every message and enforce its own allowlist because browser traffic can be modified.
 

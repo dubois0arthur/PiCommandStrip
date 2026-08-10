@@ -114,6 +114,8 @@ dashboardUi.bindPing(() => {
     }
 });
 
+dashboardUi.bindNavigationOverride();
+dashboardUi.initializeLayoutDebug();
 dashboardUi.addEvent("Dashboard initialized.");
 dashboardUi.tickClock();
 const storedToken = readStoredToken();

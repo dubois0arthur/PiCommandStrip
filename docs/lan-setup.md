@@ -11,7 +11,15 @@ This version does **not** use HTTPS. The token is sent over the LAN during `clie
 Open PowerShell in the repository root:
 
 ```powershell
-$token = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+[byte[]]$tokenBytes = New-Object byte[] 32
+$randomNumberGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+    $randomNumberGenerator.GetBytes($tokenBytes)
+    $token = [Convert]::ToBase64String($tokenBytes)
+} finally {
+    $randomNumberGenerator.Dispose()
+}
+
 $token
 ```
 
@@ -41,9 +49,12 @@ In the same PowerShell session, substitute the PC address you found:
 
 ```powershell
 $env:DOTNET_ENVIRONMENT = "Lan"
+$env:ASPNETCORE_ENVIRONMENT = "Lan"
+$env:PiCommandStrip__Network__LanEnabled = "true"
 $env:PiCommandStrip__Network__ListenAddress = "192.168.1.42"
 $env:PiCommandStrip__Authentication__Token = $token
-dotnet run --project src/PiCommandStrip.App/PiCommandStrip.App.csproj --no-build --no-launch-profile
+Set-Location "C:\Users\arthu\Documents\GitHub\PiCommandStrip\src\PiCommandStrip.App"
+dotnet run --configuration Release --no-build --no-launch-profile
 ```
 
 LAN configuration uses fixed port `5077`. To deliberately select a different fixed port, also set `PiCommandStrip__Network__Port`, and use the same port in the firewall rule and URL.
@@ -54,7 +65,24 @@ At startup, the application prints the usable dashboard URL, for example:
 Pi Command Strip dashboard available at http://192.168.1.42:5077 (LAN mode)
 ```
 
+`PiCommandStrip__Network__LanEnabled = "true"` is deliberately included even though the `Lan` environment also loads `appsettings.Lan.json`. It makes the LAN opt-in explicit and prevents an old Development launch profile or shortcut from leaving the app in loopback-only mode. Do not use a local Development shortcut to start this command; run it directly in this same PowerShell window.
+
 Environment variables apply only to the current PowerShell process and child application. For a future Windows service deployment, configure equivalent service-level secret and network settings rather than committing them.
+
+### Publish before creating a shortcut
+
+The `bin\Release\net10.0` folder is a development build output. It does not include the deployable `wwwroot` dashboard files, so a shortcut to its `.exe` can return HTTP 404 at `/`.
+
+After stopping the running server with `Ctrl+C`, publish a deployment folder:
+
+```powershell
+Set-Location "C:\Users\arthu\Documents\GitHub\PiCommandStrip"
+dotnet publish src\PiCommandStrip.App\PiCommandStrip.App.csproj --configuration Release --output "C:\PiCommandStrip"
+```
+
+The published `C:\PiCommandStrip` folder includes `wwwroot`. The host detects that published web root even when a Windows shortcut has a different working directory. A shortcut or launcher should start `C:\PiCommandStrip\PiCommandStrip.App.exe` while supplying the same explicit LAN environment variables.
+
+Do not reuse this terminal for a loopback-only Development run without first removing the LAN address variables. Development mode intentionally rejects a non-loopback `ListenAddress`.
 
 ## 4. Create a Windows Firewall rule
 
@@ -91,7 +119,9 @@ Press `Ctrl+C` in the server terminal. To clear the sensitive values from that P
 ```powershell
 Remove-Item Env:PiCommandStrip__Authentication__Token
 Remove-Item Env:PiCommandStrip__Network__ListenAddress
+Remove-Item Env:PiCommandStrip__Network__LanEnabled
 Remove-Item Env:DOTNET_ENVIRONMENT
+Remove-Item Env:ASPNETCORE_ENVIRONMENT
 ```
 
 The firewall rule remains until explicitly removed. Keeping it is reasonable only while you intend to use PiCommandStrip on that Private network.

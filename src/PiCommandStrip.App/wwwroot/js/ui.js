@@ -1,34 +1,60 @@
-const maximumEventEntries = 8;
-
 const elements = {
     actionResult: document.querySelector("#action-result"),
+    activityAnnouncer: document.querySelector("#activity-announcer"),
+    appShell: document.querySelector("#app-shell"),
     authenticationForm: document.querySelector("#authentication-form"),
     authenticationMessage: document.querySelector("#authentication-message"),
     authenticationPanel: document.querySelector("#authentication-panel"),
     authenticationToken: document.querySelector("#authentication-token"),
     connectionIndicator: document.querySelector("#connection-indicator"),
     connectionState: document.querySelector("#connection-state"),
+    contextPanel: document.querySelector(".context-panel"),
     contextAge: document.querySelector("#context-age"),
     contextStatus: document.querySelector("#context-status"),
     currentTime: document.querySelector("#current-time"),
-    eventCount: document.querySelector("#event-count"),
-    eventLog: document.querySelector("#event-log"),
+    headerContext: document.querySelector("#header-context"),
     latencyValue: document.querySelector("#latency-value"),
+    layoutDebug: document.querySelector("#layout-debug"),
+    navigationOverrideButton: document.querySelector("#navigation-override-button"),
+    offlineMessage: document.querySelector("#offline-message"),
+    offlineState: document.querySelector("#offline-state"),
+    actionsPanel: document.querySelector(".actions-panel"),
     openNotepadButton: document.querySelector("#open-notepad-button"),
     pingButton: document.querySelector("#ping-button"),
     processId: document.querySelector("#process-id"),
     processName: document.querySelector("#process-name"),
+    viewportDimensions: document.querySelector("#viewport-dimensions"),
+    warningMessage: document.querySelector("#warning-message"),
     windowTitle: document.querySelector("#window-title")
 };
 
 let commandPending = false;
 let connected = false;
 let contextChangedAt;
+let layoutDebugEnabled = false;
 let manualPingPending = false;
 
 function updateButtonStates() {
     elements.openNotepadButton.disabled = !connected || commandPending;
     elements.pingButton.disabled = !connected || manualPingPending;
+}
+
+function setActionState(button, state) {
+    if (state) {
+        button.dataset.state = state;
+    } else {
+        delete button.dataset.state;
+    }
+
+    if (state === "processing") {
+        button.setAttribute("aria-busy", "true");
+    } else {
+        button.removeAttribute("aria-busy");
+    }
+}
+
+function setWarning(message) {
+    elements.warningMessage.textContent = message;
 }
 
 function formatElapsed(timestamp) {
@@ -54,33 +80,28 @@ function formatElapsed(timestamp) {
     return `${totalHours}h ago`;
 }
 
+function updateViewportDimensions() {
+    elements.viewportDimensions.textContent =
+        `${window.innerWidth} × ${window.innerHeight} CSS px · DPR ${window.devicePixelRatio.toFixed(2)}`;
+}
+
+function setLayoutDebug(enabled) {
+    layoutDebugEnabled = enabled;
+    document.body.classList.toggle("layout-debug-mode", enabled);
+    elements.layoutDebug.hidden = !enabled;
+
+    if (enabled) {
+        updateViewportDimensions();
+    }
+}
+
 export const dashboardUi = {
-    addEvent(message, tone = "neutral", timestamp = new Date()) {
-        const item = document.createElement("li");
-        item.className = "event-item";
-        item.dataset.tone = tone;
+    addEvent(message, tone = "neutral") {
+        elements.activityAnnouncer.textContent = message;
 
-        const time = document.createElement("time");
-        time.className = "event-time";
-        time.dateTime = timestamp.toISOString();
-        time.textContent = timestamp.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit"
-        });
-
-        const text = document.createElement("span");
-        text.className = "event-message";
-        text.textContent = message;
-
-        item.append(time, text);
-        elements.eventLog.prepend(item);
-
-        while (elements.eventLog.children.length > maximumEventEntries) {
-            elements.eventLog.lastElementChild.remove();
+        if (tone === "warning" || tone === "failure") {
+            setWarning(message);
         }
-
-        elements.eventCount.textContent = `${elements.eventLog.children.length} / ${maximumEventEntries}`;
     },
 
     bindOpenNotepad(callback) {
@@ -96,6 +117,28 @@ export const dashboardUi = {
         });
     },
 
+    bindNavigationOverride() {
+        elements.navigationOverrideButton.addEventListener("click", () => {
+            elements.activityAnnouncer.textContent = "Primary command strip selected.";
+            window.requestAnimationFrame(() => elements.processName.focus({ preventScroll: true }));
+        });
+    },
+
+    initializeLayoutDebug() {
+        const query = new URLSearchParams(window.location.search);
+        setLayoutDebug(query.get("layoutDebug") === "1");
+
+        window.addEventListener("keydown", event => {
+            if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "d") {
+                event.preventDefault();
+                setLayoutDebug(!layoutDebugEnabled);
+            }
+        });
+
+        window.addEventListener("resize", updateViewportDimensions);
+        window.visualViewport?.addEventListener("resize", updateViewportDimensions);
+    },
+
     showAuthenticationRequired(message = "Authentication is required.") {
         elements.authenticationPanel.hidden = false;
         elements.authenticationMessage.textContent = message;
@@ -104,7 +147,7 @@ export const dashboardUi = {
 
     showAuthenticating() {
         elements.authenticationPanel.hidden = false;
-        elements.authenticationMessage.textContent = "Authenticatingâ€¦";
+        elements.authenticationMessage.textContent = "Authenticating…";
     },
 
     showAuthenticated() {
@@ -119,19 +162,23 @@ export const dashboardUi = {
         contextChangedAt = new Date(state.observedAtUtc);
 
         if (state.isAvailable) {
+            const processName = state.processName || "Unknown application";
+            elements.headerContext.textContent = processName;
             elements.contextStatus.dataset.state = "available";
-            elements.contextStatus.textContent = "Active context";
-            elements.processName.textContent = state.processName;
+            elements.contextStatus.textContent = "Context ready";
+            elements.processName.textContent = processName;
             elements.windowTitle.textContent = state.windowTitle || "No window title";
             elements.processId.textContent = state.processId;
-            this.addEvent(`Context changed to ${state.processName} (PID ${state.processId}).`, "neutral");
+            setWarning("Trusted private network only.");
+            this.addEvent(`Context changed to ${processName} (PID ${state.processId}).`);
         } else {
+            elements.headerContext.textContent = "No active context";
             elements.contextStatus.dataset.state = "unavailable";
             elements.contextStatus.textContent = "Context unavailable";
             elements.processName.textContent = "No active context";
             elements.windowTitle.textContent = "Windows did not report a usable foreground window.";
             elements.processId.textContent = "—";
-            this.addEvent("Foreground context became unavailable.", "warning");
+            this.addEvent("Foreground context unavailable; general controls remain available.", "warning");
         }
 
         elements.contextAge.textContent = formatElapsed(contextChangedAt);
@@ -141,17 +188,19 @@ export const dashboardUi = {
         commandPending = true;
         elements.actionResult.dataset.state = "pending";
         elements.actionResult.textContent = "Opening Notepad…";
+        setActionState(elements.openNotepadButton, "processing");
         updateButtonStates();
     },
 
     showCommandResult(result) {
         commandPending = false;
-        elements.actionResult.dataset.state = result.succeeded ? "success" : "failure";
+        const state = result.succeeded ? "success" : "failure";
+        elements.actionResult.dataset.state = state;
         elements.actionResult.textContent = result.message;
+        setActionState(elements.openNotepadButton, state);
         this.addEvent(
             `open_notepad: ${result.message}`,
-            result.succeeded ? "success" : "failure",
-            new Date(result.completedAtUtc));
+            state);
         updateButtonStates();
     },
 
@@ -163,17 +212,36 @@ export const dashboardUi = {
         commandPending = false;
         elements.actionResult.dataset.state = "failure";
         elements.actionResult.textContent = "Disconnected before command completion.";
+        setActionState(elements.openNotepadButton, "failure");
         this.addEvent("Command interrupted by disconnect.", "failure");
         updateButtonStates();
     },
 
     setConnection(state, text) {
         connected = state === "connected";
+        elements.appShell.dataset.connection = state;
         elements.connectionIndicator.dataset.state = state;
-        elements.connectionState.textContent = text;
+        elements.connectionState.textContent = text.toLowerCase().includes("retrying")
+            ? "Retrying connection"
+            : text;
+        elements.offlineState.hidden = connected;
+        [elements.contextPanel, elements.actionsPanel].forEach(panel => {
+            panel.inert = !connected;
+            panel.setAttribute("aria-hidden", connected ? "false" : "true");
+        });
 
-        if (!connected) {
+        if (connected) {
+            elements.offlineMessage.textContent = "Trying to reconnect. Context and commands will return automatically.";
+            setWarning("Trusted private network only.");
+        } else {
             manualPingPending = false;
+            elements.latencyValue.textContent = "—";
+            elements.headerContext.textContent = state === "connecting" ? "Waiting for PC" : "PC unavailable";
+            elements.offlineMessage.textContent = state === "connecting"
+                ? "Connecting to the Windows host. Controls will enable when authentication completes."
+                : "Trying to reconnect. Context and commands will return automatically.";
+            setWarning("PC unavailable — controls disabled.");
+            setActionState(elements.pingButton, null);
         }
 
         updateButtonStates();
@@ -183,6 +251,7 @@ export const dashboardUi = {
         manualPingPending = true;
         elements.actionResult.dataset.state = "pending";
         elements.actionResult.textContent = "Measuring round trip…";
+        setActionState(elements.pingButton, "processing");
         updateButtonStates();
     },
 
@@ -194,7 +263,8 @@ export const dashboardUi = {
             manualPingPending = false;
             elements.actionResult.dataset.state = "success";
             elements.actionResult.textContent = `Pong received in ${roundedLatency} ms.`;
-            this.addEvent(`Ping completed in ${roundedLatency} ms.`, "success");
+            setActionState(elements.pingButton, "success");
+            this.addEvent(`Ping completed in ${roundedLatency} ms.`);
             updateButtonStates();
         }
     },
@@ -206,6 +276,7 @@ export const dashboardUi = {
             manualPingPending = false;
             elements.actionResult.dataset.state = "failure";
             elements.actionResult.textContent = "Ping timed out.";
+            setActionState(elements.pingButton, "failure");
             this.addEvent("Ping timed out.", "failure");
             updateButtonStates();
         }

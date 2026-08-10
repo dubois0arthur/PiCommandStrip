@@ -25,7 +25,15 @@ No Node.js, npm, frontend packages, or application NuGet packages are required. 
 Run these commands from the repository root in PowerShell:
 
 ```powershell
-$token = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+[byte[]]$tokenBytes = New-Object byte[] 32
+$randomNumberGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+    $randomNumberGenerator.GetBytes($tokenBytes)
+    $token = [Convert]::ToBase64String($tokenBytes)
+} finally {
+    $randomNumberGenerator.Dispose()
+}
+
 $token
 dotnet user-secrets set "PiCommandStrip:Authentication:Token" "$token" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
 ```
@@ -45,14 +53,21 @@ dotnet test PiCommandStrip.sln --no-build
 Development mode explicitly binds only to `127.0.0.1:5077`:
 
 ```powershell
+Remove-Item Env:PiCommandStrip__Network__ListenAddress -ErrorAction SilentlyContinue
+Remove-Item Env:PiCommandStrip__Network__Port -ErrorAction SilentlyContinue
+$env:DOTNET_ENVIRONMENT = "Development"
 dotnet run --project src/PiCommandStrip.App/PiCommandStrip.App.csproj --no-build --launch-profile http
 ```
 
 Open `http://localhost:5077`, enter the token, and press **Connect**. The page connects to `/ws` on the same origin. Press `Ctrl+C` to stop Kestrel gracefully.
 
+The dashboard is sized for the Raspberry Pi display's 1024x600 landscape CSS viewport. Add `?layoutDebug=1` to the URL, or press `Ctrl+Shift+D`, to outline the major interface regions and show the current viewport dimensions and device-pixel ratio. The shortcut can also close the overlay. This mode is local presentation tooling and does not alter WebSocket messages or command behavior.
+
 ## Run for a Raspberry Pi client
 
-Follow [the LAN setup guide](docs/lan-setup.md). LAN mode is not selected by `launchSettings.json`; it requires the `Lan` environment, a concrete PC address, and the token supplied outside Git.
+Follow [the LAN setup guide](docs/lan-setup.md). LAN mode is not selected by `launchSettings.json`; it requires an explicit LAN-enabled setting, a concrete PC address, and the token supplied outside Git.
+
+Do not create a shortcut directly to `bin\Release\net10.0\PiCommandStrip.App.exe`. That folder is a build output used by development and does not contain the deployable static dashboard files. Use `dotnet run` from the project directory while developing, or create a published deployment folder before making a shortcut.
 
 ## Available command
 

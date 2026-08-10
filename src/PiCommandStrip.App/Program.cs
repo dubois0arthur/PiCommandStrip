@@ -2,10 +2,18 @@ using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.Configuration;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.Health;
+using PiCommandStrip.App.Hosting;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.WebSockets;
 
-var builder = WebApplication.CreateBuilder(args);
+var contentRootPath = ContentRootPathResolver.Resolve(
+    Directory.GetCurrentDirectory(),
+    AppContext.BaseDirectory);
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = contentRootPath
+});
 
 var piCommandStripOptions = builder.Configuration
     .GetRequiredSection("PiCommandStrip")

@@ -2,135 +2,165 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Pi Command Strip</title>
     <link rel="stylesheet" href="/css/site.css">
 </head>
 <body>
-    <div class="app-shell">
-        <header class="status-header">
-            <div class="brand-block">
-                <p class="brand-kicker">PC control surface</p>
-                <h1>Pi Command Strip</h1>
-            </div>
+    <div id="app-shell" class="app-shell" data-connection="disconnected">
+        <h1 class="visually-hidden">Pi Command Strip</h1>
 
-            <div class="header-status" aria-label="System status">
-                <section class="connection-readout" aria-labelledby="connection-label">
-                    <span id="connection-indicator" class="status-dot" aria-hidden="true"></span>
-                    <div>
-                        <p id="connection-label" class="readout-label">Connection</p>
-                        <p id="connection-state" class="readout-value" role="status" aria-live="polite">
-                            Connecting
-                        </p>
-                    </div>
-                </section>
+        <header class="status-bar" aria-label="PC status" data-debug-label="Status">
+            <section class="status-context" aria-labelledby="active-context-label">
+                <span id="active-context-label" class="status-label">CTX // Active</span>
+                <strong id="header-context" class="status-value status-context-value">Waiting for PC</strong>
+            </section>
 
-                <section class="header-readout" aria-labelledby="latency-label">
-                    <p id="latency-label" class="readout-label">Round trip</p>
-                    <p id="latency-value" class="readout-value" aria-live="polite">—</p>
-                </section>
+            <section class="status-item connection-item" aria-labelledby="connection-label">
+                <span id="connection-indicator" class="status-dot" aria-hidden="true"></span>
+                <span class="status-copy">
+                    <span id="connection-label" class="status-label">Link // PC</span>
+                    <strong id="connection-state" class="status-value" role="status" aria-live="polite">
+                        Connecting
+                    </strong>
+                </span>
+            </section>
 
-                <section class="header-readout clock-readout" aria-labelledby="clock-label">
-                    <p id="clock-label" class="readout-label">Local time</p>
-                    <time id="current-time" class="readout-value">--:--:--</time>
-                </section>
-            </div>
+            <section class="status-item" aria-labelledby="latency-label">
+                <span id="latency-label" class="status-label">RTT // Latency</span>
+                <strong id="latency-value" class="status-value" aria-live="polite">&mdash;</strong>
+            </section>
+
+            <section class="status-item time-item" aria-labelledby="clock-label">
+                <span id="clock-label" class="status-label">SYS // Local time</span>
+                <time id="current-time" class="status-value">--:--:--</time>
+            </section>
         </header>
 
-        <section id="authentication-panel" class="authentication-panel" aria-labelledby="authentication-heading">
-            <form id="authentication-form" class="authentication-card">
-                <p class="section-label">Protected connection</p>
-                <h2 id="authentication-heading">Connect to the Windows PC</h2>
-                <p class="authentication-help">
-                    Enter the pre-shared token configured on the PC. It is kept only for this browser session.
-                </p>
-                <label for="authentication-token">Pre-shared token</label>
-                <input
-                    id="authentication-token"
-                    name="authentication-token"
-                    type="password"
-                    autocomplete="off"
-                    spellcheck="false"
-                    required>
-                <p id="authentication-message" class="authentication-message" role="status" aria-live="polite">
-                    Authentication is required.
-                </p>
-                <button class="action-button action-button-primary authentication-submit" type="submit">
-                    <span class="action-name">Connect</span>
-                    <span class="action-detail">Authenticate this dashboard</span>
-                </button>
-            </form>
-        </section>
-
-        <main class="workspace">
-            <section class="panel context-panel" aria-labelledby="context-heading">
-                <div class="panel-heading">
-                    <div>
-                        <p class="section-label">Current PC context</p>
-                        <h2 id="context-heading">Foreground application</h2>
-                    </div>
-                    <p id="context-status" class="context-status" role="status" aria-live="polite">
-                        Waiting for state
+        <div class="content-region">
+            <section id="authentication-panel" class="authentication-panel" aria-labelledby="authentication-heading" hidden>
+                <form id="authentication-form" class="authentication-card">
+                    <p class="eyebrow">Secure handshake // Auth.01</p>
+                    <h2 id="authentication-heading">Connect to the Windows PC</h2>
+                    <p class="authentication-help">
+                        Enter the pre-shared token configured on the PC. It stays in this browser session only.
                     </p>
-                </div>
-
-                <div class="context-primary">
-                    <p class="context-field-label">Active process</p>
-                    <p id="process-name" class="process-name">Waiting…</p>
-                    <p id="window-title" class="window-title">No window information received.</p>
-                </div>
-
-                <dl class="context-metadata">
-                    <div>
-                        <dt>Process ID</dt>
-                        <dd id="process-id">—</dd>
-                    </div>
-                    <div>
-                        <dt>Context age</dt>
-                        <dd id="context-age">—</dd>
-                    </div>
-                </dl>
+                    <label for="authentication-token">Pre-shared token</label>
+                    <input
+                        id="authentication-token"
+                        name="authentication-token"
+                        type="password"
+                        autocomplete="off"
+                        spellcheck="false"
+                        required>
+                    <p id="authentication-message" class="authentication-message" role="status" aria-live="polite">
+                        Authentication is required.
+                    </p>
+                    <button class="action-button action-button-primary authentication-submit" type="submit">
+                        <span class="action-name">Connect</span>
+                        <span class="action-detail">Authenticate this dashboard</span>
+                    </button>
+                </form>
             </section>
 
-            <section class="panel actions-panel" aria-labelledby="actions-heading">
-                <div class="actions-heading-row">
-                    <div>
-                        <p class="section-label">Allowlisted controls</p>
-                        <h2 id="actions-heading">Actions</h2>
+            <main id="primary-view" class="primary-view" data-debug-label="Primary view">
+                <section class="panel context-panel" aria-labelledby="context-heading" data-debug-label="Context" data-module="CTX.01">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="eyebrow">Foreground target // Live</p>
+                            <h2 id="context-heading">Active process</h2>
+                        </div>
+                        <p id="context-status" class="context-status" role="status" aria-live="polite">
+                            Waiting for state
+                        </p>
                     </div>
-                    <p id="action-result" class="action-result" role="status" aria-live="polite">
-                        Connect to enable controls.
-                    </p>
-                </div>
 
-                <div class="action-grid">
-                    <button id="open-notepad-button" class="action-button action-button-primary" type="button" disabled>
-                        <span class="action-name">Open Notepad</span>
-                        <span class="action-detail">Windows application</span>
-                    </button>
-                    <button id="ping-button" class="action-button" type="button" disabled>
-                        <span class="action-name">Ping</span>
-                        <span class="action-detail">Measure latency</span>
-                    </button>
-                    <div class="future-action-slot" aria-label="Reserved for future context actions">
-                        <span class="action-name">Context actions</span>
-                        <span class="action-detail">Reserved for a later milestone</span>
+                    <div class="context-primary">
+                        <p class="context-field-label">Process signature</p>
+                        <p id="process-name" class="process-name" tabindex="-1">Waiting&hellip;</p>
+                        <p id="window-title" class="window-title">No window information received.</p>
                     </div>
-                </div>
+
+                    <dl class="context-metadata" aria-label="Context details">
+                        <div>
+                            <dt>Process ID</dt>
+                            <dd id="process-id">&mdash;</dd>
+                        </div>
+                        <div>
+                            <dt>Last changed</dt>
+                            <dd id="context-age">&mdash;</dd>
+                        </div>
+                    </dl>
+                </section>
+
+                <section class="panel actions-panel" aria-labelledby="actions-heading" data-debug-label="Actions" data-module="ACT.02">
+                    <div class="actions-heading-row">
+                        <div>
+                            <p class="eyebrow">Execution bay // Safe</p>
+                            <h2 id="actions-heading">Command matrix</h2>
+                        </div>
+                        <span class="allowlist-badge">Safe-ID</span>
+                    </div>
+
+                    <div class="action-grid">
+                        <button id="open-notepad-button" class="action-button action-button-primary" type="button" disabled>
+                            <span class="action-state" aria-hidden="true"></span>
+                            <span class="action-copy">
+                                <span class="action-name">Open Notepad</span>
+                                <span class="action-detail">Launch Windows Notepad</span>
+                            </span>
+                        </button>
+                        <button id="ping-button" class="action-button" type="button" disabled>
+                            <span class="action-state" aria-hidden="true"></span>
+                            <span class="action-copy">
+                                <span class="action-name">Measure latency</span>
+                                <span class="action-detail">Send a round-trip ping</span>
+                            </span>
+                        </button>
+                    </div>
+
+                    <p class="action-hint">Actions are selected by the current PC context. More can be added to this area later.</p>
+                </section>
+
+                <section id="offline-state" class="offline-state" aria-labelledby="offline-heading" role="status" aria-live="polite">
+                    <div class="offline-mark" aria-hidden="true">PC</div>
+                    <div>
+                        <p class="eyebrow">Link interrupted // Retry</p>
+                        <h2 id="offline-heading">PC node unavailable</h2>
+                        <p id="offline-message">Trying to reconnect. Context and commands will return automatically.</p>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <footer class="utility-bar" aria-label="Persistent controls and feedback" data-debug-label="Utility">
+            <section class="utility-item result-item" aria-labelledby="result-label">
+                <span id="result-label" class="utility-label">CMD // Latest result</span>
+                <strong id="action-result" class="utility-value" role="status" aria-live="polite">
+                    No command sent this session.
+                </strong>
             </section>
 
-            <aside class="panel event-panel" aria-labelledby="events-heading">
-                <div class="panel-heading event-heading">
-                    <div>
-                        <p class="section-label">Recent activity</p>
-                        <h2 id="events-heading">Event log</h2>
-                    </div>
-                    <span id="event-count" class="event-count">0 / 8</span>
-                </div>
-                <ol id="event-log" class="event-log" aria-live="polite" aria-relevant="additions"></ol>
-            </aside>
-        </main>
+            <section class="utility-item warning-item" aria-labelledby="warning-label">
+                <span id="warning-label" class="utility-label">SYS // Warning</span>
+                <strong id="warning-message" class="utility-value" role="status" aria-live="polite">
+                    PC unavailable &mdash; controls disabled.
+                </strong>
+            </section>
+
+            <button id="navigation-override-button" class="navigation-override" type="button">
+                <span class="utility-label">NAV // Override</span>
+                <span class="navigation-value">Command strip_</span>
+            </button>
+        </footer>
     </div>
+
+    <p id="activity-announcer" class="visually-hidden" role="status" aria-live="polite"></p>
+    <aside id="layout-debug" class="layout-debug" hidden aria-label="Layout debug information">
+        <strong>Layout debug</strong>
+        <output id="viewport-dimensions">0 &times; 0</output>
+        <span>Ctrl+Shift+D to close</span>
+    </aside>
 
     <script type="module" src="/js/dashboard.js"></script>
 </body>
