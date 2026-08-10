@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using PiCommandStrip.App.Authentication;
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
@@ -11,6 +12,8 @@ public sealed class WebSocketConnectionHandler(
     ServerMessageFactory messageFactory,
     WebSocketMessageReader messageReader,
     ForegroundStateStore foregroundStateStore,
+    ContextStateCoordinator contextStateCoordinator,
+    ContextCatalog contextCatalog,
     IPcCommandDispatcher commandDispatcher,
     ClientAuthenticationService authenticationService,
     AuthenticationAttemptLimiter authenticationAttemptLimiter,
@@ -38,7 +41,12 @@ public sealed class WebSocketConnectionHandler(
                     new ServerHelloPayload(
                         "PiCommandStrip.App",
                         ProtocolConstants.Version,
-                        ProtocolConstants.MaximumMessageSizeBytes)),
+                        ProtocolConstants.MaximumMessageSizeBytes,
+                        contextCatalog.Profiles
+                            .Select(profile => new ContextDescriptorPayload(
+                                profile.Id,
+                                profile.DisplayName))
+                            .ToArray())),
                 cancellationToken);
 
             while (socket.State is WebSocketState.Open or WebSocketState.CloseSent)
@@ -177,8 +185,9 @@ public sealed class WebSocketConnectionHandler(
                     "WebSocket client {ClientName} authenticated for connection {ConnectionId}",
                     clientHello.Payload.ClientName,
                     connection.ConnectionId);
-                await connection.InitializePcStateAsync(
+                await connection.InitializeStateAsync(
                     foregroundStateStore,
+                    contextStateCoordinator,
                     messageFactory,
                     cancellationToken);
                 return;
@@ -191,6 +200,21 @@ public sealed class WebSocketConnectionHandler(
 
                 await connection.SendAsync(
                     messageFactory.Create(MessageTypes.Pong, new PongPayload(ping.MessageId)),
+                    cancellationToken);
+                return;
+
+            case ContextSelectionRequestMessage contextSelectionRequest:
+                if (!await EnsureAuthenticatedAsync(
+                    connection,
+                    contextSelectionRequest.MessageId,
+                    cancellationToken))
+                {
+                    return;
+                }
+
+                await HandleContextSelectionRequestAsync(
+                    connection,
+                    contextSelectionRequest,
                     cancellationToken);
                 return;
 
@@ -257,6 +281,41 @@ public sealed class WebSocketConnectionHandler(
                 new CommandResultPayload(
                     commandRequest.MessageId,
                     commandRequest.Payload.CommandId,
+                    result.Succeeded,
+                    result.Message,
+                    timeProvider.GetUtcNow())),
+            cancellationToken);
+    }
+
+    private async Task HandleContextSelectionRequestAsync(
+        WebSocketClientConnection connection,
+        ContextSelectionRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        var result = request.Payload.Mode == ContextSelectionModes.Automatic
+            ? await contextStateCoordinator.UseAutomaticAsync(cancellationToken)
+            : await contextStateCoordinator.PinAsync(request.Payload.ContextId!, cancellationToken);
+
+        if (!result.Succeeded)
+        {
+            logger.LogWarning(
+                "Rejected unavailable context identifier for connection {ConnectionId}",
+                connection.ConnectionId);
+        }
+        else
+        {
+            logger.LogInformation(
+                "Context selection changed to {SelectionMode} context {ContextId} for connection {ConnectionId}",
+                result.State.SelectionMode,
+                result.State.ContextId,
+                connection.ConnectionId);
+        }
+
+        await connection.SendAsync(
+            messageFactory.Create(
+                MessageTypes.ContextSelectionResult,
+                new ContextSelectionResultPayload(
+                    request.MessageId,
                     result.Succeeded,
                     result.Message,
                     timeProvider.GetUtcNow())),

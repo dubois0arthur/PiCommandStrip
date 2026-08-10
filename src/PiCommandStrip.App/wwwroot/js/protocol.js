@@ -103,6 +103,19 @@ export class DashboardSocket {
         return messageId;
     }
 
+    sendContextSelection(selection) {
+        if (!this.isConnected || !selection) {
+            return null;
+        }
+
+        const messageId = createMessageId();
+        const payload = selection === "automatic"
+            ? { mode: "automatic" }
+            : { mode: "manual", contextId: selection };
+        this.#send("context_selection_request", messageId, payload);
+        return messageId;
+    }
+
     #openConnection() {
         if (this.#stopped) {
             return;
@@ -178,7 +191,7 @@ export class DashboardSocket {
                 case "server_hello":
                     this.#send("client_hello", createMessageId(), {
                         clientName: "browser-dashboard",
-                        protocolVersion: "2",
+                        protocolVersion: "3",
                         authenticationToken: this.#token
                     });
                     this.#callbacks.onServerHello?.(message.payload);
@@ -190,6 +203,12 @@ export class DashboardSocket {
                         this.#callbacks.onAuthenticated?.();
                     }
                     this.#callbacks.onPcState?.(message.payload);
+                    break;
+                case "context_state":
+                    this.#callbacks.onContextState?.(message.payload);
+                    break;
+                case "context_selection_result":
+                    this.#callbacks.onContextSelectionResult?.(message.payload);
                     break;
                 case "pong":
                     this.#handlePong(message.payload);

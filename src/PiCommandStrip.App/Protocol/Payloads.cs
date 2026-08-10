@@ -3,7 +3,10 @@ namespace PiCommandStrip.App.Protocol;
 public sealed record ServerHelloPayload(
     string ApplicationName,
     string ProtocolVersion,
-    int MaximumMessageSizeBytes);
+    int MaximumMessageSizeBytes,
+    IReadOnlyList<ContextDescriptorPayload> AvailableContexts);
+
+public sealed record ContextDescriptorPayload(string ContextId, string DisplayName);
 
 public sealed record PcStatePayload(
     bool IsAvailable,
@@ -11,6 +14,22 @@ public sealed record PcStatePayload(
     int? ProcessId,
     string? WindowTitle,
     DateTimeOffset ObservedAtUtc);
+
+public sealed record ContextStatePayload(
+    string ContextId,
+    string DisplayName,
+    string SelectionMode,
+    string Source,
+    string Trigger,
+    string? ForegroundProcess,
+    string? ForegroundWindowTitle,
+    DateTimeOffset ActiveSinceUtc);
+
+public sealed record ContextSelectionResultPayload(
+    Guid RequestMessageId,
+    bool Succeeded,
+    string Message,
+    DateTimeOffset CompletedAtUtc);
 
 public sealed record CommandResultPayload(
     Guid RequestMessageId,
@@ -29,5 +48,7 @@ public sealed record ClientHelloPayload(
     string? AuthenticationToken);
 
 public sealed record CommandRequestPayload(string CommandId);
+
+public sealed record ContextSelectionRequestPayload(string Mode, string? ContextId);
 
 public sealed record PingPayload;

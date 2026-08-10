@@ -10,6 +10,7 @@ const elements = {
     connectionState: document.querySelector("#connection-state"),
     contextPanel: document.querySelector(".context-panel"),
     contextAge: document.querySelector("#context-age"),
+    contextSelection: document.querySelector("#context-selection"),
     contextStatus: document.querySelector("#context-status"),
     currentTime: document.querySelector("#current-time"),
     headerContext: document.querySelector("#header-context"),
@@ -31,12 +32,16 @@ const elements = {
 let commandPending = false;
 let connected = false;
 let contextChangedAt;
+let contextSelectionPending = false;
+let lastContextSelection = "automatic";
+let lastRenderedContextKey;
 let layoutDebugEnabled = false;
 let manualPingPending = false;
 
 function updateButtonStates() {
     elements.openNotepadButton.disabled = !connected || commandPending;
     elements.pingButton.disabled = !connected || manualPingPending;
+    elements.contextSelection.disabled = !connected || contextSelectionPending;
 }
 
 function setActionState(button, state) {
@@ -117,6 +122,12 @@ export const dashboardUi = {
         });
     },
 
+    bindContextSelection(callback) {
+        elements.contextSelection.addEventListener("change", () => {
+            callback(elements.contextSelection.value);
+        });
+    },
+
     bindNavigationOverride() {
         elements.navigationOverrideButton.addEventListener("click", () => {
             elements.activityAnnouncer.textContent = "Primary command strip selected.";
@@ -159,29 +170,81 @@ export const dashboardUi = {
     },
 
     renderPcState(state) {
-        contextChangedAt = new Date(state.observedAtUtc);
-
         if (state.isAvailable) {
             const processName = state.processName || "Unknown application";
-            elements.headerContext.textContent = processName;
-            elements.contextStatus.dataset.state = "available";
-            elements.contextStatus.textContent = "Context ready";
             elements.processName.textContent = processName;
             elements.windowTitle.textContent = state.windowTitle || "No window title";
             elements.processId.textContent = state.processId;
             setWarning("Trusted private network only.");
-            this.addEvent(`Context changed to ${processName} (PID ${state.processId}).`);
         } else {
-            elements.headerContext.textContent = "No active context";
-            elements.contextStatus.dataset.state = "unavailable";
-            elements.contextStatus.textContent = "Context unavailable";
-            elements.processName.textContent = "No active context";
+            elements.processName.textContent = "No foreground process";
             elements.windowTitle.textContent = "Windows did not report a usable foreground window.";
             elements.processId.textContent = "—";
-            this.addEvent("Foreground context unavailable; general controls remain available.", "warning");
+            this.addEvent("Foreground process unavailable; the Default context remains available.", "warning");
+        }
+    },
+
+    renderContextState(state) {
+        contextChangedAt = new Date(state.activeSinceUtc);
+        const selectionValue = state.selectionMode === "manual"
+            ? state.contextId
+            : "automatic";
+        lastContextSelection = selectionValue;
+        elements.contextSelection.value = selectionValue;
+        elements.headerContext.textContent = state.displayName;
+        elements.contextStatus.dataset.state = "available";
+
+        const sourceLabels = {
+            fallback: "fallback",
+            foreground_process: state.trigger,
+            manual_override: "pinned"
+        };
+        const modeLabel = state.selectionMode === "manual" ? "Manual" : "Automatic";
+        elements.contextStatus.textContent = `${modeLabel} · ${sourceLabels[state.source] || state.source}`;
+        elements.contextAge.textContent = formatElapsed(contextChangedAt);
+
+        const contextKey = `${state.contextId}:${state.selectionMode}:${state.activeSinceUtc}`;
+        if (contextKey !== lastRenderedContextKey) {
+            this.addEvent(`${state.displayName} context active in ${modeLabel.toLowerCase()} mode.`);
+            lastRenderedContextKey = contextKey;
+        }
+    },
+
+    setAvailableContexts(contexts = []) {
+        const automaticOption = document.createElement("option");
+        automaticOption.value = "automatic";
+        automaticOption.textContent = "Automatic";
+        const options = [automaticOption];
+
+        contexts.forEach(context => {
+            const option = document.createElement("option");
+            option.value = context.contextId;
+            option.textContent = `Pin: ${context.displayName}`;
+            options.push(option);
+        });
+
+        elements.contextSelection.replaceChildren(...options);
+        elements.contextSelection.value = lastContextSelection;
+    },
+
+    setContextSelectionPending() {
+        contextSelectionPending = true;
+        elements.actionResult.dataset.state = "pending";
+        elements.actionResult.textContent = "Updating context selection…";
+        updateButtonStates();
+    },
+
+    showContextSelectionResult(result) {
+        contextSelectionPending = false;
+        elements.actionResult.dataset.state = result.succeeded ? "success" : "failure";
+        elements.actionResult.textContent = result.message;
+
+        if (!result.succeeded) {
+            elements.contextSelection.value = lastContextSelection;
         }
 
-        elements.contextAge.textContent = formatElapsed(contextChangedAt);
+        this.addEvent(result.message, result.succeeded ? "success" : "failure");
+        updateButtonStates();
     },
 
     setCommandPending() {
@@ -235,6 +298,7 @@ export const dashboardUi = {
             setWarning("Trusted private network only.");
         } else {
             manualPingPending = false;
+            contextSelectionPending = false;
             elements.latencyValue.textContent = "—";
             elements.headerContext.textContent = state === "connecting" ? "Waiting for PC" : "PC unavailable";
             elements.offlineMessage.textContent = state === "connecting"

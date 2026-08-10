@@ -3,6 +3,8 @@ using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using PiCommandStrip.App.Authentication;
+using PiCommandStrip.App.Configuration;
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
@@ -26,6 +28,7 @@ public sealed class WebSocketAuthenticationTests
 
         Assert.True(fixture.Connection.IsAuthenticated);
         Assert.Contains(MessageTypes.PcState, fixture.Socket.SentMessageTypes);
+        Assert.Contains(MessageTypes.ContextState, fixture.Socket.SentMessageTypes);
     }
 
     [Fact]
@@ -88,6 +91,31 @@ public sealed class WebSocketAuthenticationTests
     }
 
     [Fact]
+    public async Task ContextSelectionRequest_BeforeAuthentication_IsRejected()
+    {
+        var fixture = CreateFixture(ContextSelection(ContextIds.Media));
+
+        await fixture.RunAsync();
+
+        Assert.Contains("authentication_required", fixture.Socket.SentErrorCodes);
+        Assert.Equal(ContextSelectionModes.Automatic, fixture.ContextCoordinator.Current.SelectionMode);
+    }
+
+    [Fact]
+    public async Task ContextSelectionRequest_AfterAuthentication_PinsContext()
+    {
+        var fixture = CreateFixture(
+            ClientHello(ValidToken),
+            ContextSelection(ContextIds.Media));
+
+        await fixture.RunAsync();
+
+        Assert.Equal(ContextIds.Media, fixture.ContextCoordinator.Current.ContextId);
+        Assert.Equal(ContextSelectionModes.Manual, fixture.ContextCoordinator.Current.SelectionMode);
+        Assert.Contains(MessageTypes.ContextSelectionResult, fixture.Socket.SentMessageTypes);
+    }
+
+    [Fact]
     public void AuthenticationAttemptLimiter_BlocksRepeatedAttemptsUntilWindowExpires()
     {
         var timeProvider = new AdjustableTimeProvider(CurrentTime);
@@ -109,11 +137,24 @@ public sealed class WebSocketAuthenticationTests
         var socket = new ScriptedWebSocket(clientMessages);
         var connection = new WebSocketClientConnection(socket, timeProvider);
         var commandDispatcher = new RecordingCommandDispatcher();
+        var contextCatalog = new ContextCatalog();
+        var contextResolver = new ForegroundProcessContextResolver(
+            contextCatalog,
+            new ContextOptions());
+        var contextStateStore = new ContextStateStore(
+            contextCatalog,
+            contextResolver,
+            timeProvider);
+        var contextCoordinator = new ContextStateCoordinator(
+            contextStateStore,
+            new RecordingContextStateBroadcaster());
         var handler = new WebSocketConnectionHandler(
             new ClientMessageParser(),
             new ServerMessageFactory(timeProvider),
             new WebSocketMessageReader(),
             new ForegroundStateStore(timeProvider),
+            contextCoordinator,
+            contextCatalog,
             commandDispatcher,
             new ClientAuthenticationService(ValidToken, timeProvider),
             new AuthenticationAttemptLimiter(timeProvider),
@@ -121,7 +162,12 @@ public sealed class WebSocketAuthenticationTests
             new TestHostApplicationLifetime(),
             NullLogger<WebSocketConnectionHandler>.Instance);
 
-        return new WebSocketFixture(handler, connection, socket, commandDispatcher);
+        return new WebSocketFixture(
+            handler,
+            connection,
+            socket,
+            commandDispatcher,
+            contextCoordinator);
     }
 
     private static byte[] ClientHello(string? token, DateTimeOffset? timestamp = null) =>
@@ -144,6 +190,13 @@ public sealed class WebSocketAuthenticationTests
             commandId = PcCommandIds.OpenNotepad
         });
 
+    private static byte[] ContextSelection(string contextId) =>
+        CreateEnvelope(MessageTypes.ContextSelectionRequest, CurrentTime, new
+        {
+            mode = ContextSelectionModes.Manual,
+            contextId
+        });
+
     private static byte[] CreateEnvelope(string type, DateTimeOffset timestamp, object payload) =>
         JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -157,9 +210,19 @@ public sealed class WebSocketAuthenticationTests
         WebSocketConnectionHandler Handler,
         WebSocketClientConnection Connection,
         ScriptedWebSocket Socket,
-        RecordingCommandDispatcher CommandDispatcher)
+        RecordingCommandDispatcher CommandDispatcher,
+        ContextStateCoordinator ContextCoordinator)
     {
         public Task RunAsync() => Handler.HandleAsync(Connection, CancellationToken.None);
+    }
+
+    private sealed class RecordingContextStateBroadcaster : IContextStateBroadcaster
+    {
+        public Task BroadcastAsync(ContextState state, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingCommandDispatcher : IPcCommandDispatcher

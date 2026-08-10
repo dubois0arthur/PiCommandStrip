@@ -7,6 +7,8 @@ public sealed class PiCommandStripOptions
     public NetworkOptions Network { get; init; } = new();
 
     public AuthenticationOptions Authentication { get; init; } = new();
+
+    public ContextOptions Contexts { get; init; } = new();
 }
 
 public sealed class NetworkOptions
@@ -21,6 +23,12 @@ public sealed class NetworkOptions
 public sealed class AuthenticationOptions
 {
     public string Token { get; init; } = string.Empty;
+}
+
+public sealed class ContextOptions
+{
+    public Dictionary<string, string[]> ProcessMappings { get; init; } =
+        new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed record ValidatedNetworkOptions(bool LanEnabled, IPAddress ListenAddress, int Port)

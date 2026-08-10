@@ -1,8 +1,8 @@
-# Initial architecture
+# Architecture
 
 ## Scope
 
-This document describes the initial architecture through the first explicitly enabled Raspberry Pi LAN client. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Version 2 adds pre-shared-token authentication without changing the command or foreground-monitoring architecture.
+This document describes the architecture through the generic context/profile milestone. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 3 adds automatic context resolution and authenticated manual context selection while retaining the version 2 authentication, command, foreground-monitoring, reconnection, and LAN boundaries.
 
 ## System shape
 
@@ -13,10 +13,11 @@ Windows PC
 +------------------------------------------------------------------+
 | ASP.NET Core host                                                |
 |                                                                  |
-|  Foreground monitor --> current-state coordinator                |
-|       |                       |                                  |
-|       v                       v                                  |
-|  Win32 adapter          WebSocket endpoint <--> Browser dashboard|
+|  Foreground monitor --> foreground store --> WebSocket endpoint  |
+|       |                       |                    ^             |
+|       v                       v                    |             |
+|  Win32 adapter       context resolver --> context state <--------|
+|                                                  <--> Dashboard  |
 |                                  |                               |
 |                                  v                               |
 |                         command dispatcher                       |
@@ -28,7 +29,7 @@ Windows PC
 
 One process is enough for this milestone. Splitting the parts by responsibility makes them testable without turning them into separate services or deployable applications.
 
-## Planned responsibilities
+## Responsibilities
 
 ### ASP.NET Core host
 
@@ -53,18 +54,31 @@ The Windows implementation uses `GetForegroundWindow`, `GetWindowThreadProcessId
 - Runs as an ASP.NET Core hosted background service.
 - Polls the adapter every 250 milliseconds (approximately four times per second) because Windows does not provide this application with a simple managed foreground-change stream.
 - Publishes only meaningful changes to avoid sending identical state continuously.
+- Passes each meaningful foreground change to context coordination after the original raw `pc_state` publication.
 - Accepts the host cancellation token and exits promptly during shutdown.
 
 A **hosted service** is a component whose lifetime ASP.NET Core manages alongside the web server. A **cancellation token** is a cooperative stop signal: loops and asynchronous operations observe it and finish cleanly rather than being forcibly terminated.
 
+### Context catalog, resolver, and state
+
+- `ContextCatalog` owns the small fixed set of context IDs and display names: `default`, `media`, `browser`, `gaming`, and `audio`.
+- `IContextResolver` accepts a `ContextSignals` value. Its first implementation, `ForegroundProcessContextResolver`, uses only the already-collected foreground process and returns Default when no process mapping matches.
+- `PiCommandStrip:Contexts:ProcessMappings` is the single configuration map from context ID to process names. Process matching is case-insensitive and accepts configured `.exe` suffixes. Empty names, unknown context IDs, and a process assigned more than once fail startup instead of producing ambiguous behavior.
+- `ContextStateStore` retains the latest foreground evidence, effective context, selection mode, source/trigger, and activation time. Its lock makes foreground polling and dashboard selection requests safe to apply concurrently.
+- `ContextStateCoordinator` serializes updates with their broadcasts so automatic and manual changes reach clients in the order the server applies them.
+
+The default mappings classify `spotify` as Media and `firefox`, `chrome`, and `msedge` as Browser / Research. Gaming is deliberately an empty configurable list. Audio is a defined profile that can be manually pinned, but it has no automatic signal or external integration yet.
+
+`ContextSignals` is intentionally a small wrapper rather than making the resolver depend directly on Win32 detection. Future fields can represent media sessions, audio sessions, or a running game without changing the foreground adapter or WebSocket transport. Manual selection remains selection policy above automatic resolution; this is not a plugin framework.
+
 ### State and connection coordinator
 
-- Retains the latest foreground state so a newly connected dashboard receives an immediate snapshot.
+- Retains the latest foreground and context states so a newly authenticated dashboard receives both immediate snapshots.
 - Tracks active WebSocket connections needed for broadcasting.
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
 
-The implementation separates the latest-state store from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
+The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground and context snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
 
 ### WebSocket endpoint and protocol
 
@@ -75,7 +89,7 @@ The implementation separates the latest-state store from a `ConcurrentDictionary
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 2 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before foreground state, ping, or commands are accepted. Foreground-state publication then sends `pc_state` immediately and subsequently only when meaningful state changes.
+The implemented version 3 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state` and `context_state` snapshots. Later foreground changes can update both; manual selection updates `context_state` independently.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -100,7 +114,8 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Places large allowlisted action buttons in a dedicated touch-oriented action rail.
 - Keeps the latest command result, highest-priority warning, and primary-view navigation override in a persistent utility rail.
 - Connects to the WebSocket endpoint and displays connecting, connected, disconnected, and retrying states.
-- Renders the current process name and window title.
+- Renders the resolved context alongside the current process name and window title.
+- Populates its context selector from the server catalog and can pin a context or return to automatic selection.
 - Sends only a fixed command identifier selected by a known UI control, plus a generated request ID for correlation.
 - Displays pressed, disabled, processing, success, rejected, and failed command states without relying on hover.
 - Reconnects with a bounded delay after an unexpected disconnect.
@@ -109,7 +124,7 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Uses a high-contrast cyberpunk telemetry theme built entirely from local CSS, system fonts, gradients, and static geometric patterns; it has no image, font, CDN, or animation dependency.
 - Provides a developer layout overlay through `?layoutDebug=1` or `Ctrl+Shift+D`; the overlay reports the CSS viewport and device-pixel ratio without changing protocol behavior.
 
-The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, and `ui.js` owns DOM rendering, clock/context-age updates, control availability, persistent feedback, and layout debugging.
+The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, and `ui.js` owns DOM rendering, context selection, clock/context-age updates, control availability, persistent feedback, and layout debugging. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
 
 Client-side fixed buttons improve usability, but they are not a security boundary. The server must validate every message and enforce its own allowlist because browser traffic can be modified.
 
@@ -123,10 +138,25 @@ The finalized, direction-specific UTF-8 JSON envelopes and payload examples are 
 
 1. The hosted monitor asks `IForegroundWindowProvider` for the current foreground state every 250 milliseconds.
 2. The Windows adapter calls the required Win32 APIs and maps the result to a small C# value.
-3. The monitor compares the value with the last published state.
-4. When availability, process ID, process name, or title changes, the coordinator retains that observation and broadcasts a `pc_state` JSON message.
-5. Dashboard JavaScript parses the message and updates availability, process name, process ID, title, and time last changed.
-6. A newly connected dashboard receives the stored current value immediately rather than waiting for the next window switch.
+3. The monitor compares the value with the last published raw foreground state.
+4. When availability, process ID, process name, or title changes, it retains and broadcasts the original `pc_state` JSON message.
+5. The monitor then gives the same typed observation to `ContextStateCoordinator`; no process-name policy exists in Win32 code or the polling service.
+6. In automatic mode, the resolver selects a mapped profile or Default fallback. In manual mode, the pin stays effective while foreground process/title evidence continues to update.
+7. Changed context state is retained and broadcast as `context_state`. Its activation timestamp changes only when the effective context ID changes, not for a title change or polling timestamp.
+8. Dashboard JavaScript renders the active profile, selection mode, foreground details, and context age.
+9. A newly authenticated dashboard receives both retained values immediately rather than waiting for the next window switch.
+
+### Context selection
+
+1. The dashboard builds its selector from `availableContexts` in `server_hello`.
+2. Selecting a profile sends an authenticated `context_selection_request` in `manual` mode with one fixed catalog ID. Selecting Automatic sends the same request type with `automatic` mode and no context ID.
+3. The parser enforces the exact direction-specific payload shape and field bounds.
+4. The context store rejects unknown profile IDs without changing state.
+5. A valid manual request pins that context globally for this host process. Foreground observations still refresh the evidence fields but do not change the profile.
+6. A valid automatic request clears the pin and immediately resolves the latest retained foreground observation.
+7. A changed state is broadcast to every authenticated client, and the requester receives a correlated `context_selection_result` even when the requested mode was already active.
+
+Pins are intentionally in-memory and server-wide for this single-user, shared-token appliance. They reset to Automatic when the host restarts. Per-user persistence would require identity and storage requirements that are outside this milestone.
 
 ### Command round trip
 
@@ -157,6 +187,8 @@ The first automated tests should focus on behavior that can run without an inter
 - malformed and unsupported protocol messages are rejected;
 - command results preserve request correlation;
 - foreground changes publish once while duplicate samples do not;
+- configured process mappings resolve to the expected profile and unknown processes fall back to Default;
+- automatic context changes, manual pinning, and returning to automatic mode preserve the expected state;
 - cancellation stops the monitoring loop and command handlers.
 
 The real Win32 adapter needs a small amount of focused integration or manual testing on Windows. Most other logic should depend on interfaces and plain data types so it can be tested deterministically.

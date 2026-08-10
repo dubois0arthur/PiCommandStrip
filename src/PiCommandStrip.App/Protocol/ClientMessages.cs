@@ -12,6 +12,11 @@ public sealed record CommandRequestMessage(
     DateTimeOffset TimestampUtc,
     CommandRequestPayload Payload) : ClientMessage(MessageId, TimestampUtc);
 
+public sealed record ContextSelectionRequestMessage(
+    Guid MessageId,
+    DateTimeOffset TimestampUtc,
+    ContextSelectionRequestPayload Payload) : ClientMessage(MessageId, TimestampUtc);
+
 public sealed record PingMessage(
     Guid MessageId,
     DateTimeOffset TimestampUtc,

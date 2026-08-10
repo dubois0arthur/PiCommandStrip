@@ -1,3 +1,5 @@
+using PiCommandStrip.App.Configuration;
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 
 namespace PiCommandStrip.Tests.ForegroundWindows;
@@ -18,7 +20,11 @@ public sealed class ForegroundStateMonitorTests
         var provider = new SequenceForegroundWindowProvider(firstObservation, identicalLaterObservation);
         var broadcaster = new RecordingPcStateBroadcaster();
         var stateStore = new ForegroundStateStore(new FixedTimeProvider(InitialTime));
-        var monitor = new ForegroundStateMonitor(provider, stateStore, broadcaster);
+        var monitor = new ForegroundStateMonitor(
+            provider,
+            stateStore,
+            broadcaster,
+            CreateContextCoordinator());
 
         await monitor.CheckOnceAsync(CancellationToken.None);
         await monitor.CheckOnceAsync(CancellationToken.None);
@@ -42,7 +48,8 @@ public sealed class ForegroundStateMonitorTests
         var monitor = new ForegroundStateMonitor(
             provider,
             new ForegroundStateStore(new FixedTimeProvider(InitialTime)),
-            broadcaster);
+            broadcaster,
+            CreateContextCoordinator());
 
         await monitor.CheckOnceAsync(CancellationToken.None);
         await monitor.CheckOnceAsync(CancellationToken.None);
@@ -62,7 +69,8 @@ public sealed class ForegroundStateMonitorTests
         var monitor = new ForegroundStateMonitor(
             provider,
             new ForegroundStateStore(new FixedTimeProvider(InitialTime)),
-            broadcaster);
+            broadcaster,
+            CreateContextCoordinator());
 
         await monitor.CheckOnceAsync(CancellationToken.None);
         await monitor.CheckOnceAsync(CancellationToken.None);
@@ -79,6 +87,15 @@ public sealed class ForegroundStateMonitorTests
         string windowTitle,
         DateTimeOffset observedAtUtc) =>
         new(true, processName, processId, windowTitle, observedAtUtc);
+
+    private static ContextStateCoordinator CreateContextCoordinator()
+    {
+        var timeProvider = new FixedTimeProvider(InitialTime);
+        var catalog = new ContextCatalog();
+        var resolver = new ForegroundProcessContextResolver(catalog, new ContextOptions());
+        var stateStore = new ContextStateStore(catalog, resolver, timeProvider);
+        return new ContextStateCoordinator(stateStore, new NullContextStateBroadcaster());
+    }
 
     private sealed class SequenceForegroundWindowProvider(params ForegroundWindowState[] states)
         : IForegroundWindowProvider
@@ -100,6 +117,15 @@ public sealed class ForegroundStateMonitorTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             States.Add(state);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NullContextStateBroadcaster : IContextStateBroadcaster
+    {
+        public Task BroadcastAsync(ContextState state, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return Task.CompletedTask;
         }
     }

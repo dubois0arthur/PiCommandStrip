@@ -7,9 +7,11 @@ Implemented features include:
 - repository-local HTML, CSS, and JavaScript dashboard;
 - `/health` HTTP endpoint and authenticated `/ws` native WebSocket endpoint;
 - Windows foreground-application detection with change-only broadcasts;
+- generic Default, Media, Browser / Research, Gaming, and Audio context profiles;
+- automatic process-based context switching plus authenticated manual pinning;
 - server-allowlisted `open_notepad` command with a per-connection cooldown;
 - loopback-only development configuration and explicit LAN configuration; and
-- focused xUnit tests for protocol, authentication, commands, and state changes.
+- focused xUnit tests for protocol, authentication, commands, foreground state, and context selection.
 
 Browser input cannot select a path, shell, script, arguments, or executable. LAN mode is intended only for a trusted Private network and currently uses unencrypted HTTP/WebSocket traffic.
 
@@ -72,6 +74,14 @@ Do not create a shortcut directly to `bin\Release\net10.0\PiCommandStrip.App.exe
 ## Available command
 
 The dashboard sends only the fixed identifier `open_notepad`. The server maps it to a dedicated handler that starts Notepad from the Windows system directory with shell execution disabled and no arguments. Unknown identifiers execute nothing.
+
+## Context mappings
+
+Automatic context selection reads the foreground process already observed by the Windows adapter. Add or change process names only in `PiCommandStrip:Contexts:ProcessMappings` in `src/PiCommandStrip.App/appsettings.json` (or an external configuration override). Matching is case-insensitive; `.exe` is optional.
+
+The initial mappings are Spotify → Media and Firefox/Chrome/Edge → Browser / Research. Add game process names to the `gaming` array. Default is the implicit fallback, so it is not configured as a process mapping. Audio is available for manual selection but has no automatic integration yet.
+
+The dashboard selector can pin any catalog context or return to Automatic. A pin applies to all authenticated dashboards, survives WebSocket reconnects, and resets when the host process restarts.
 
 ## Project layout
 

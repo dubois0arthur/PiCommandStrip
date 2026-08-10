@@ -1,5 +1,6 @@
 using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.Configuration;
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.Health;
 using PiCommandStrip.App.Hosting;
@@ -37,6 +38,7 @@ builder.Services.AddSingleton<AuthenticationAttemptLimiter>();
 builder.Services.AddSingleton<HealthResponseFactory>();
 builder.Services.AddPcCommands();
 builder.Services.AddPiCommandStripWebSockets();
+builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
 builder.Services.AddForegroundWindowMonitoring();
 
 var app = builder.Build();

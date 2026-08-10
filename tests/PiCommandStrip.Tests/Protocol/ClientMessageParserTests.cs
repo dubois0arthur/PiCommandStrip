@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.Protocol;
 
 namespace PiCommandStrip.Tests.Protocol;
@@ -57,6 +58,51 @@ public sealed class ClientMessageParserTests
 
         var message = Assert.IsType<CommandRequestMessage>(result.Message);
         Assert.Equal("demo.safe-command", message.Payload.CommandId);
+    }
+
+    [Fact]
+    public void Parse_AutomaticContextSelection_ReturnsStronglyTypedMessage()
+    {
+        var json = CreateEnvelope(MessageTypes.ContextSelectionRequest, new
+        {
+            mode = ContextSelectionModes.Automatic
+        });
+
+        var result = _parser.Parse(json);
+
+        var message = Assert.IsType<ContextSelectionRequestMessage>(result.Message);
+        Assert.Equal(ContextSelectionModes.Automatic, message.Payload.Mode);
+        Assert.Null(message.Payload.ContextId);
+    }
+
+    [Fact]
+    public void Parse_ManualContextSelection_ReturnsContextId()
+    {
+        var json = CreateEnvelope(MessageTypes.ContextSelectionRequest, new
+        {
+            mode = ContextSelectionModes.Manual,
+            contextId = ContextIds.Media
+        });
+
+        var result = _parser.Parse(json);
+
+        var message = Assert.IsType<ContextSelectionRequestMessage>(result.Message);
+        Assert.Equal(ContextIds.Media, message.Payload.ContextId);
+    }
+
+    [Fact]
+    public void Parse_AutomaticContextSelectionWithContextId_IsRejected()
+    {
+        var json = CreateEnvelope(MessageTypes.ContextSelectionRequest, new
+        {
+            mode = ContextSelectionModes.Automatic,
+            contextId = ContextIds.Media
+        });
+
+        var result = _parser.Parse(json);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("invalid_payload", result.Error?.Code);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.Protocol;
 
@@ -39,6 +40,18 @@ public sealed class WebSocketConnectionManager(
         cancellationToken.ThrowIfCancellationRequested();
     }
 
+    public async Task BroadcastContextStateAsync(
+        ContextState state,
+        CancellationToken cancellationToken)
+    {
+        var sends = _connections.Values
+            .Where(connection => connection.IsReadyForBroadcasts)
+            .Select(connection => SendContextSafelyAsync(connection, state, cancellationToken));
+
+        await Task.WhenAll(sends);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
     private async Task SendSafelyAsync(
         WebSocketClientConnection connection,
         ForegroundWindowState state,
@@ -62,6 +75,33 @@ public sealed class WebSocketConnectionManager(
             logger.LogWarning(
                 exception,
                 "Removed WebSocket connection {ConnectionId} after a broadcast failure",
+                connection.ConnectionId);
+        }
+    }
+
+    private async Task SendContextSafelyAsync(
+        WebSocketClientConnection connection,
+        ContextState state,
+        CancellationToken cancellationToken)
+    {
+        using var sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        sendCancellation.CancelAfter(ClientSendTimeout);
+
+        try
+        {
+            await connection.SendContextStateAsync(state, messageFactory, sendCancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Application shutdown owns cancellation; the connection handler will close the socket.
+        }
+        catch (Exception exception)
+        {
+            Remove(connection.ConnectionId);
+            connection.Abort();
+            logger.LogWarning(
+                exception,
+                "Removed WebSocket connection {ConnectionId} after a context broadcast failure",
                 connection.ConnectionId);
         }
     }

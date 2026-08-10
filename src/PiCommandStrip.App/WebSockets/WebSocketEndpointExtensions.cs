@@ -1,3 +1,4 @@
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.Protocol;
 
 namespace PiCommandStrip.App.WebSockets;
@@ -10,6 +11,7 @@ public static class WebSocketEndpointExtensions
         services.AddSingleton<ServerMessageFactory>();
         services.AddSingleton<WebSocketMessageReader>();
         services.AddSingleton<WebSocketConnectionManager>();
+        services.AddSingleton<IContextStateBroadcaster, WebSocketContextStateBroadcaster>();
         services.AddTransient<WebSocketConnectionHandler>();
 
         return services;

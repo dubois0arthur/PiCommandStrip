@@ -62,6 +62,14 @@ const dashboardSocket = new DashboardSocket({
         dashboardUi.renderPcState(state);
     },
 
+    onContextState(state) {
+        dashboardUi.renderContextState(state);
+    },
+
+    onContextSelectionResult(result) {
+        dashboardUi.showContextSelectionResult(result);
+    },
+
     onPong(result) {
         dashboardUi.showPong(result.roundTripMilliseconds, result.source);
     },
@@ -74,6 +82,10 @@ const dashboardSocket = new DashboardSocket({
         if (result.commandId === "open_notepad") {
             dashboardUi.showCommandResult(result);
         }
+    },
+
+    onServerHello(server) {
+        dashboardUi.setAvailableContexts(server.availableContexts);
     },
 
     onServerError(error) {
@@ -95,6 +107,12 @@ const dashboardSocket = new DashboardSocket({
 dashboardUi.bindOpenNotepad(() => {
     if (dashboardSocket.sendOpenNotepad()) {
         dashboardUi.setCommandPending();
+    }
+});
+
+dashboardUi.bindContextSelection(selection => {
+    if (dashboardSocket.sendContextSelection(selection)) {
+        dashboardUi.setContextSelectionPending();
     }
 });
 

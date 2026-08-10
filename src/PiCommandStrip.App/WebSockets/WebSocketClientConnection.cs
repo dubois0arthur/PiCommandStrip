@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Text.Json;
+using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
@@ -10,6 +11,7 @@ public sealed class WebSocketClientConnection(WebSocket socket, TimeProvider tim
 {
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private ForegroundWindowState? _lastSentPcState;
+    private ContextState? _lastSentContextState;
     private int _isAuthenticated;
     private int _isReadyForBroadcasts;
 
@@ -43,8 +45,9 @@ public sealed class WebSocketClientConnection(WebSocket socket, TimeProvider tim
         }
     }
 
-    public async Task InitializePcStateAsync(
+    public async Task InitializeStateAsync(
         ForegroundStateStore stateStore,
+        ContextStateCoordinator contextStateCoordinator,
         ServerMessageFactory messageFactory,
         CancellationToken cancellationToken)
     {
@@ -54,6 +57,10 @@ public sealed class WebSocketClientConnection(WebSocket socket, TimeProvider tim
         {
             Volatile.Write(ref _isReadyForBroadcasts, 1);
             await SendPcStateCoreAsync(stateStore.Current, messageFactory, cancellationToken);
+            await SendContextStateCoreAsync(
+                contextStateCoordinator.Current,
+                messageFactory,
+                cancellationToken);
         }
         finally
         {
@@ -76,6 +83,28 @@ public sealed class WebSocketClientConnection(WebSocket socket, TimeProvider tim
         try
         {
             await SendPcStateCoreAsync(state, messageFactory, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public async Task SendContextStateAsync(
+        ContextState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (!IsReadyForBroadcasts)
+        {
+            return;
+        }
+
+        await _sendLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            await SendContextStateCoreAsync(state, messageFactory, cancellationToken);
         }
         finally
         {
@@ -106,6 +135,32 @@ public sealed class WebSocketClientConnection(WebSocket socket, TimeProvider tim
             messageFactory.Create(MessageTypes.PcState, payload),
             cancellationToken);
         _lastSentPcState = state;
+    }
+
+    private async Task SendContextStateCoreAsync(
+        ContextState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (_lastSentContextState is not null && _lastSentContextState.HasSameMeaningAs(state))
+        {
+            return;
+        }
+
+        var payload = new ContextStatePayload(
+            state.ContextId,
+            state.DisplayName,
+            state.SelectionMode,
+            state.Source,
+            state.Trigger,
+            state.ForegroundProcess,
+            state.ForegroundWindowTitle,
+            state.ActiveSinceUtc);
+
+        await SendCoreAsync(
+            messageFactory.Create(MessageTypes.ContextState, payload),
+            cancellationToken);
+        _lastSentContextState = state;
     }
 
     private async Task SendCoreAsync<TPayload>(

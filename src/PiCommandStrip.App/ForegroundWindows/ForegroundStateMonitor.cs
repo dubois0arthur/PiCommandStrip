@@ -1,9 +1,12 @@
+using PiCommandStrip.App.Contexts;
+
 namespace PiCommandStrip.App.ForegroundWindows;
 
 public sealed class ForegroundStateMonitor(
     IForegroundWindowProvider foregroundWindowProvider,
     ForegroundStateStore stateStore,
-    IPcStateBroadcaster broadcaster)
+    IPcStateBroadcaster broadcaster,
+    ContextStateCoordinator contextStateCoordinator)
 {
     public async Task CheckOnceAsync(CancellationToken cancellationToken)
     {
@@ -12,6 +15,7 @@ public sealed class ForegroundStateMonitor(
         if (stateStore.TryUpdate(observation, out var changedState))
         {
             await broadcaster.BroadcastAsync(changedState, cancellationToken);
+            await contextStateCoordinator.ObserveForegroundAsync(changedState, cancellationToken);
         }
     }
 }

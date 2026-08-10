@@ -303,7 +303,7 @@ h2 {
 
 .context-metadata {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
 }
 
@@ -326,6 +326,23 @@ h2 {
     font-variant-numeric: tabular-nums;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.context-selection {
+    width: 100%;
+    min-height: 34px;
+    padding: 4px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    background: #111619;
+    color: var(--text);
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.context-selection:disabled {
+    color: #7f888e;
+    cursor: not-allowed;
 }
 
 .actions-panel {
@@ -1418,4 +1435,19 @@ h2 {
 
 body.layout-debug-mode [data-debug-label]::after {
     font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.context-selection {
+    border-color: var(--telemetry);
+    border-radius: 0;
+    background: #030503;
+    color: var(--signal);
+    text-transform: uppercase;
+    box-shadow: inset 3px 0 0 var(--telemetry);
+}
+
+.context-selection:disabled {
+    border-color: #465249;
+    color: #657069;
+    box-shadow: none;
 }

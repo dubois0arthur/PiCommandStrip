@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PiCommandStrip.App.Contexts;
 
 namespace PiCommandStrip.App.Protocol;
 
@@ -6,6 +7,7 @@ public sealed class ClientMessageParser
 {
     private const int MaximumClientNameLength = 100;
     private const int MaximumCommandIdLength = 100;
+    private const int MaximumContextIdLength = 50;
     private const int MaximumAuthenticationTokenLength = 200;
 
     public ProtocolParseResult Parse(ReadOnlyMemory<byte> utf8Json)
@@ -49,6 +51,8 @@ public sealed class ClientMessageParser
             return type switch
             {
                 MessageTypes.ClientHello => ParseClientHello(messageId, timestampUtc, payload),
+                MessageTypes.ContextSelectionRequest =>
+                    ParseContextSelectionRequest(messageId, timestampUtc, payload),
                 MessageTypes.CommandRequest => ParseCommandRequest(messageId, timestampUtc, payload),
                 MessageTypes.Ping => ProtocolParseResult.Success(
                     new PingMessage(messageId, timestampUtc, new PingPayload())),
@@ -148,6 +152,52 @@ public sealed class ClientMessageParser
             new CommandRequestPayload(commandId)));
     }
 
+    private static ProtocolParseResult ParseContextSelectionRequest(
+        Guid messageId,
+        DateTimeOffset timestampUtc,
+        JsonElement payload)
+    {
+        if (!TryGetRequiredString(payload, "mode", out var mode))
+        {
+            return ProtocolParseResult.Failure(
+                "invalid_payload",
+                "'mode' is required.",
+                messageId);
+        }
+
+        if (mode == ContextSelectionModes.Automatic)
+        {
+            if (!HasExactlyOneProperty(payload, "mode"))
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    "Automatic context selection may contain only 'mode'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new ContextSelectionRequestMessage(
+                messageId,
+                timestampUtc,
+                new ContextSelectionRequestPayload(mode, null)));
+        }
+
+        if (mode != ContextSelectionModes.Manual ||
+            !HasExactlyProperties(payload, "mode", "contextId") ||
+            !TryGetRequiredString(payload, "contextId", out var contextId) ||
+            contextId.Length > MaximumContextIdLength)
+        {
+            return ProtocolParseResult.Failure(
+                "invalid_payload",
+                $"Manual context selection requires only 'mode' and a non-empty 'contextId' of at most {MaximumContextIdLength} characters.",
+                messageId);
+        }
+
+        return ProtocolParseResult.Success(new ContextSelectionRequestMessage(
+            messageId,
+            timestampUtc,
+            new ContextSelectionRequestPayload(mode, contextId)));
+    }
+
     private static bool HasExactlyOneProperty(JsonElement parent, string expectedName)
     {
         var propertyCount = 0;
@@ -163,6 +213,31 @@ public sealed class ClientMessageParser
         }
 
         return propertyCount == 1;
+    }
+
+    private static bool HasExactlyProperties(
+        JsonElement parent,
+        string firstExpectedName,
+        string secondExpectedName)
+    {
+        var foundFirst = false;
+        var foundSecond = false;
+        var propertyCount = 0;
+
+        foreach (var property in parent.EnumerateObject())
+        {
+            propertyCount++;
+            foundFirst |= property.NameEquals(firstExpectedName);
+            foundSecond |= property.NameEquals(secondExpectedName);
+
+            if (!property.NameEquals(firstExpectedName) &&
+                !property.NameEquals(secondExpectedName))
+            {
+                return false;
+            }
+        }
+
+        return propertyCount == 2 && foundFirst && foundSecond;
     }
 
     private static bool TryGetRequiredString(JsonElement parent, string name, out string value)
