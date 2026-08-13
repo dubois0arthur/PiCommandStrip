@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
@@ -61,6 +62,18 @@ public sealed class WebSocketConnectionManager(
         var sends = _connections.Values
             .Where(connection => connection.IsReadyForBroadcasts)
             .Select(connection => SendMediaSafelyAsync(connection, state, cancellationToken));
+
+        await Task.WhenAll(sends);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    public async Task BroadcastAudioStateAsync(
+        AudioState state,
+        CancellationToken cancellationToken)
+    {
+        var sends = _connections.Values
+            .Where(connection => connection.IsReadyForBroadcasts)
+            .Select(connection => SendAudioSafelyAsync(connection, state, cancellationToken));
 
         await Task.WhenAll(sends);
         cancellationToken.ThrowIfCancellationRequested();
@@ -143,6 +156,33 @@ public sealed class WebSocketConnectionManager(
             logger.LogWarning(
                 exception,
                 "Removed WebSocket connection {ConnectionId} after a media broadcast failure",
+                connection.ConnectionId);
+        }
+    }
+
+    private async Task SendAudioSafelyAsync(
+        WebSocketClientConnection connection,
+        AudioState state,
+        CancellationToken cancellationToken)
+    {
+        using var sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        sendCancellation.CancelAfter(ClientSendTimeout);
+
+        try
+        {
+            await connection.SendAudioStateAsync(state, messageFactory, sendCancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Application shutdown owns cancellation; the connection handler will close the socket.
+        }
+        catch (Exception exception)
+        {
+            Remove(connection.ConnectionId);
+            connection.Abort();
+            logger.LogWarning(
+                exception,
+                "Removed WebSocket connection {ConnectionId} after an audio broadcast failure",
                 connection.ConnectionId);
         }
     }

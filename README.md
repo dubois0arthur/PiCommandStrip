@@ -8,21 +8,22 @@ Implemented features include:
 - `/health` HTTP endpoint and authenticated `/ws` native WebSocket endpoint;
 - Windows foreground-application detection with change-only broadcasts;
 - Windows system media-session discovery and normalized change-only state broadcasts;
+- Windows Core Audio output/application-session discovery with normalized change-only mixer state;
 - capability-aware Windows media controls and a touch-oriented Now Playing interface;
 - generic Default, Media, Browser / Research, Gaming, and Audio context profiles;
 - automatic process-based context switching plus authenticated manual pinning;
 - fixed server-allowlisted Notepad and media commands with a per-connection cooldown;
 - loopback-only development configuration and explicit LAN configuration; and
-- focused xUnit tests for protocol, authentication, commands, foreground state, context selection, and normalized media state.
+- focused xUnit tests for protocol, authentication, commands, foreground state, context selection, normalized media state, and audio grouping/state changes.
 
 Browser input cannot select a path, shell, script, arguments, or executable. LAN mode is intended only for a trusted Private network and currently uses unencrypted HTTP/WebSocket traffic.
 
 ## Prerequisites
 
 - .NET SDK `10.0.302`, pinned by `global.json`
-- Windows 10 version 2004 or later for foreground detection, system media sessions, and Notepad execution
+- Windows 10 version 2004 or later for foreground detection, system media sessions, Core Audio mixer state, and Notepad execution
 
-No Node.js, npm, frontend packages, or application NuGet packages are required. The test-only packages are `Microsoft.NET.Test.Sdk`, `xunit`, and `xunit.runner.visualstudio`.
+No Node.js, npm, or frontend packages are required. The application references only stable `NAudio.Wasapi` 2.3.0 for classic Windows Core Audio device/session COM wrappers; it does not use NAudio playback, capture, codec, MIDI, DSP, or UI packages. Test-only packages are `Microsoft.NET.Test.Sdk`, `xunit`, and `xunit.runner.visualstudio`.
 
 ## Generate the pre-shared token
 
@@ -94,6 +95,12 @@ The host follows the current session selected by Windows System Media Transport 
 Media is the primary workspace in Media context and in Default when no more useful context capability exists. Browser-owned media is also promoted while Browser / Research is active; when another context has higher-value content, the same state renders as a compact persistent strip. Both presentations share the same component logic, provide a deliberate no-art fallback, support capability-aware playback buttons and touch seeking, and advance progress locally between server corrections. Artwork is read only from the Windows media session, kept in a bounded one-entry memory cache, and served by the local host; Spotify Web API and external image requests are not used.
 
 The normal interface is a compact status header, one dynamic workspace, and a small Home/Media/More navigation row. Foreground process is supporting metadata rather than the main panel. PID, context age, manual RTT, and manual context selection live in System Details. Prototype Notepad and latency cards are no longer primary controls; ordinary command outcomes appear as accessible transient feedback instead of permanent result panels.
+
+## Windows audio mixer state
+
+The host separately monitors the default multimedia output device and its Windows Core Audio render sessions. It publishes master output volume/mute plus grouped application entries containing process metadata, volume, mute, and active/inactive state. Media and audio remain separate: media describes content and playback controls, while audio describes render streams and volume.
+
+Multiple sessions with the same recognizable process name are grouped into one application entry; metadata-poor sessions use Windows grouping/session identity and are never merged by display text alone. Raw Windows session identifiers remain server-side so a later audio-control phase can target every member of a grouped application. Explicit system-sounds and expired sessions are omitted, but incomplete ordinary sessions remain visible. This phase exposes `audio_state` only—there are no frontend sliders, microphone controls, device switching, routing, or audio commands yet.
 
 ## Project layout
 

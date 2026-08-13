@@ -1,4 +1,5 @@
 using PiCommandStrip.App.Authentication;
+using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.Configuration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
@@ -43,6 +44,7 @@ builder.Services.AddPiCommandStripWebSockets(commandCooldown);
 builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
 builder.Services.AddForegroundWindowMonitoring();
 builder.Services.AddWindowsMediaSessionMonitoring();
+builder.Services.AddWindowsAudioMixerMonitoring();
 
 var app = builder.Build();
 

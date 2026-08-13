@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture through the context-aware touchscreen workspace and local media-artwork support. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 6 adds a bounded local artwork reference on top of the version 5 media controls. The dashboard hierarchy is a frontend-only refinement and retains authentication, foreground monitoring, context selection, reconnection, command security, and LAN boundaries.
+This document describes the architecture through the normalized Windows audio-mixer backend, context-aware touchscreen workspace, and local media-artwork support. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 7 adds output-device and application-audio state while retaining authentication, foreground monitoring, context selection, media controls/artwork, reconnection, command security, and LAN boundaries. Audio controls are intentionally not part of this phase.
 
 ## System shape
 
@@ -20,6 +20,8 @@ Windows PC
 |  Windows media manager --> media service --> media store --------|
 |                                  |                               |
 |                                  +--> artwork cache --> HTTP -----|
+|                                                                  |
+|  Windows Core Audio --> audio mixer service --> audio store ------|
 |                                                                  |
 |  fixed command allowlist <--> command dispatcher ----------------|
 +------------------------------------------------------------------+
@@ -87,14 +89,38 @@ The Windows API may expose Spotify, packaged media players, and browser tabs suc
 
 Media is a parallel global signal, not an input to the current foreground-process resolver. Every authenticated client receives it regardless of active context. Playback alone cannot force Media context: Spotify remains Media only when Spotify is foreground through the existing mapping, and a foreground browser remains Browser / Research while browser media is playing.
 
+### Windows audio-mixer service
+
+- `IAudioMixerService` exposes the latest platform-neutral `AudioState`; protocol and future UI code do not depend on NAudio or COM types.
+- `WindowsAudioMixerService` is the only PiCommandStrip component that imports `NAudio.CoreAudioApi`. It owns the default multimedia render endpoint, endpoint-volume object, audio-session manager, and per-session event registrations.
+- `NAudio.Wasapi` 2.3.0 is the single application package used for classic Windows Core Audio COM projection. PiCommandStrip uses only device/session discovery, identity/state, `IAudioEndpointVolume`, `ISimpleAudioVolume`, and notifications—never capture, playback, codecs, DSP, or routing.
+- Endpoint volume notifications and per-session volume, mute, display-name, state, and disconnect notifications request immediate refreshes. Session-created notifications request reconciliation. Callback threads only signal the service; state reads and resource changes remain serialized in the background loop.
+- A two-second fallback check detects default-output changes and recovers missed state events. A fifteen-second full reconciliation catches missed creation/removal notifications without high-frequency session enumeration.
+- Every session wrapper and event registration is explicitly detached/disposed when its session expires, the default device changes, or the host stops. Individual COM/session failures are caught and omitted from that observation rather than terminating PiCommandStrip.
+- `AudioStateNormalizer` clamps and rounds scalar volumes, removes only explicit Windows system-sounds and expired sessions, groups safe application peers, and produces deterministic ordering/identifiers. Missing process or display metadata remains a visible `Unknown audio session` entry.
+- `AudioStateStore` assigns a monotonically increasing in-process revision only to meaningful changes. Timestamp-only observations and sub-0.001 volume noise do not broadcast.
+
+Media and audio remain separate even when both describe Spotify or a browser. A media session answers “what is playing?” and follows the one session Windows considers current; it contains title, artist, artwork, timeline, and transport capabilities. An audio session answers “which render streams exist on this output?” and contains endpoint, volume, mute, process, and activity state. There may be many audio sessions for one media application, and many audio sessions with no media metadata at all.
+
+Application grouping uses the following priority:
+
+1. A normalized process name groups ordinary sessions, including multiple process IDs for applications such as browsers.
+2. Without a process name, a non-empty Windows grouping GUID is used.
+3. Without that, the Windows session identifier is used.
+4. The session-instance identifier is the final per-session fallback. Display name alone is never considered safe evidence for merging.
+
+One `ApplicationAudioState` therefore carries a stable hashed `ApplicationId`, zero or more process IDs, user-facing metadata, aggregate state, session count, mixed-volume/mute flags, and the underlying session-instance IDs retained only on the server. The displayed volume is the maximum member volume so an audible member is not hidden; displayed mute is true only when every member is muted. A future command can resolve the application ID back to every current underlying session and set them together. Raw session identifiers—which can contain implementation details—are not serialized to the browser.
+
+Peak level is deliberately omitted from version 7. Core Audio exposes inexpensive meters, but a useful meter requires frequent sampling and would conflict with change-only WebSocket state. It can be added later as a separately paced signal if the physical mixer UI demonstrates that need.
+
 ### State and connection coordinator
 
-- Retains the latest foreground, context, and media states so a newly authenticated dashboard receives all three immediate snapshots.
+- Retains the latest foreground, context, media, and audio states so a newly authenticated dashboard receives all four immediate snapshots.
 - Tracks active WebSocket connections needed for broadcasting.
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
 
-The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, and media snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
+The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, media, and audio snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
 
 ### WebSocket endpoint and protocol
 
@@ -105,7 +131,7 @@ The implementation separates the latest-state stores from a `ConcurrentDictionar
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 6 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, and `media_state` snapshots. Later foreground changes can update the first two, manual selection updates `context_state` independently, and Windows media events update `media_state` independently.
+The implemented version 7 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, and `audio_state` snapshots. Later foreground changes can update the first two, manual selection updates `context_state` independently, and Windows media/audio events update their own state independently.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -144,6 +170,7 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Uses a 1024x600 landscape layout with large touch targets and no hover dependency.
 - Uses a restrained cyberdeck telemetry theme built from local CSS, system fonts, low-contrast gradients, and a subtle grid. Optional media-session artwork is fetched only from the same PiCommandStrip host; there is no external image, font, CDN, or animation dependency.
 - Provides a developer layout overlay through `?layoutDebug=1` or `Ctrl+Shift+D`; the overlay reports the CSS viewport and device-pixel ratio without changing protocol behavior. On loopback only, `layoutFixture=no-media` and `layoutFixture=long-media` can be combined with `layoutDebug=1` to inspect otherwise transient media layouts without altering server state or protocol messages.
+- Recognizes `audio_state` for protocol compatibility but does not render mixer controls yet.
 
 The dynamic workspace is the extension seam for the upcoming Audio page. Context definitions select workspace copy/actions without creating separate page shells, the action grid accepts two or three compact controls as capabilities arrive, and compact media already composes beneath a higher-value surface. A future mixer can therefore supply master/device/application controls to the existing workspace and expose a smaller gaming subset without duplicating the header, navigation, feedback, or media systems.
 
@@ -178,6 +205,16 @@ The finalized, direction-specific UTF-8 JSON envelopes and payload examples are 
 5. The store compares semantic fields, including artwork ID, and retains only meaningful changes. Changed state is broadcast as `media_state` with a small local artwork URL; a newly authenticated connection receives the retained state even when no media is active.
 6. Manager events switch subscriptions when applications or the current session change. Media-property events permit a new thumbnail read. A five-second playing-only refresh advances position while reusing the current artwork ID.
 7. Media state never calls the context coordinator. Context continues to resolve from foreground process or a manual pin.
+
+### Audio state
+
+1. The hosted audio service opens Windows' default multimedia render endpoint through `MMDeviceEnumerator` and reads stable device ID, friendly name, master scalar volume, and master mute.
+2. Its audio-session manager enumerates current render sessions and registers session-created notifications. Each usable control registers an `IAudioSessionEventsHandler` for external volume/mute, metadata, state, and disconnect changes.
+3. Each refresh reads independent raw `AudioSessionSnapshot` values. A process lookup is best-effort; failures retain the session with its other Windows metadata.
+4. The normalizer filters only explicit system-sounds and expired controls, groups sessions using process/group/session identity, and converts them into deterministic application entries. Raw identity remains server-side for future multi-session control.
+5. The store compares device, aggregate application values, membership, and ordering. A meaningful change increments `revision`, retains the new timestamp, and broadcasts `audio_state`; an identical observation does nothing.
+6. Authentication sends the retained audio state after foreground, context, and media state. Audio remains available to every context and does not influence context resolution.
+7. Default-device polling and slow full reconciliation complement Windows events. They are recovery mechanisms, not level-meter polling.
 
 ### Context selection
 
@@ -224,6 +261,9 @@ The first automated tests should focus on behavior that can run without an inter
 - automatic context changes, manual pinning, and returning to automatic mode preserve the expected state;
 - incomplete media metadata normalizes safely, positions are bounded, and reported capabilities are preserved;
 - timestamp-only media refreshes are suppressed while meaningful metadata, playback, position, and active/inactive changes are retained;
+- audio sessions group deterministically by safe identity while duplicate process sessions map to one application entry;
+- missing audio metadata remains visible, explicit system/expired sessions are omitted, and session removal changes membership;
+- audio volume, mute, output-device, and availability changes increment revision while duplicate observations are suppressed;
 - artwork cache IDs are stable for identical bytes, stale IDs are evicted, malformed path-like IDs are rejected, MIME types are constrained, and memory input is bounded;
 - authenticated connections receive the current media snapshot;
 - media command IDs dispatch only to their corresponding `IMediaSessionService` operations;
@@ -231,11 +271,13 @@ The first automated tests should focus on behavior that can run without an inter
 - validated seek positions reach the media service as a `TimeSpan`, and session-disappearance failures remain safe command results;
 - cancellation stops the monitoring loop and command handlers.
 
-The real Win32 foreground adapter and WinRT media adapter need a small amount of focused integration or manual testing on Windows. Most other logic depends on interfaces and plain data types so it can be tested deterministically.
+The real Win32 foreground adapter, WinRT media adapter, and Core Audio/NAudio adapter need a small amount of focused integration or manual testing on Windows. Most other logic depends on interfaces and plain data types so it can be tested deterministically.
 
 ## Dependency plan
 
-No explicit external application NuGet or frontend packages are required. The app and tests target `net10.0-windows10.0.19041.0`. On modern .NET, that Windows-specific target framework makes the SDK supply the Windows SDK reference/projection assets required to consume inbox WinRT APIs such as `Windows.Media.Control`; `Microsoft.Windows.SDK.Contracts`, `Microsoft.Windows.CsWinRT`, and Windows App SDK are not application dependencies. Foreground interop continues to use built-in .NET P/Invoke.
+The app and tests target `net10.0-windows10.0.19041.0`. On modern .NET, that Windows-specific target framework makes the SDK supply the Windows SDK reference/projection assets required to consume inbox WinRT APIs such as `Windows.Media.Control`; `Microsoft.Windows.SDK.Contracts`, `Microsoft.Windows.CsWinRT`, and Windows App SDK are not application dependencies. Foreground interop continues to use built-in .NET P/Invoke.
+
+Core Audio application sessions are classic COM APIs rather than WinRT and are not supplied as convenient .NET SDK projections. The application therefore references only stable `NAudio.Wasapi` 2.3.0 (which brings its small `NAudio.Core` dependency) instead of maintaining local COM vtables, marshaling declarations, callback implementations, and release logic. The broad `NAudio` metapackage and NAudio 3 preview are not used.
 
 The installed stable .NET SDK is pinned with `global.json`. The test project uses `Microsoft.NET.Test.Sdk` to host test execution, `xunit` for the test API and assertions, and `xunit.runner.visualstudio` for test discovery through the .NET and Visual Studio test platform.
 

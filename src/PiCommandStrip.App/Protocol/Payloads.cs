@@ -44,6 +44,31 @@ public sealed record MediaStatePayload(
     DateTimeOffset LastUpdatedUtc,
     string? ArtworkUrl);
 
+public sealed record AudioStatePayload(
+    bool IsAvailable,
+    AudioOutputDevicePayload? OutputDevice,
+    IReadOnlyList<ApplicationAudioPayload> Applications,
+    long Revision,
+    DateTimeOffset LastUpdatedUtc);
+
+public sealed record AudioOutputDevicePayload(
+    string DeviceId,
+    string FriendlyName,
+    float Volume,
+    bool IsMuted);
+
+public sealed record ApplicationAudioPayload(
+    string ApplicationId,
+    IReadOnlyList<int> ProcessIds,
+    string? ProcessName,
+    string DisplayName,
+    float Volume,
+    bool IsMuted,
+    string State,
+    int SessionCount,
+    bool HasMixedVolume,
+    bool HasMixedMute);
+
 public sealed record ContextSelectionResultPayload(
     Guid RequestMessageId,
     bool Succeeded,

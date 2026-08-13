@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using PiCommandStrip.App.Authentication;
+using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.Configuration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
@@ -31,6 +32,7 @@ public sealed class WebSocketAuthenticationTests
         Assert.Contains(MessageTypes.PcState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.ContextState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.MediaState, fixture.Socket.SentMessageTypes);
+        Assert.Contains(MessageTypes.AudioState, fixture.Socket.SentMessageTypes);
     }
 
     [Fact]
@@ -170,6 +172,7 @@ public sealed class WebSocketAuthenticationTests
             contextCoordinator,
             contextCatalog,
             new StubMediaSessionService(timeProvider),
+            new StubAudioMixerService(timeProvider),
             commandDispatcher,
             new ClientAuthenticationService(ValidToken, timeProvider),
             new AuthenticationAttemptLimiter(timeProvider),
@@ -280,6 +283,11 @@ public sealed class WebSocketAuthenticationTests
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(MediaSessionCommandResult.Failure("No active media session."));
         }
+    }
+
+    private sealed class StubAudioMixerService(TimeProvider timeProvider) : IAudioMixerService
+    {
+        public AudioState Current { get; } = AudioState.Unavailable(timeProvider.GetUtcNow());
     }
 
     private sealed class RecordingCommandDispatcher : IPcCommandDispatcher

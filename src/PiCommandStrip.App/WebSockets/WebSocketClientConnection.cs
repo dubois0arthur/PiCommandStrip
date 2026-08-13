@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Text.Json;
+using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
@@ -17,6 +18,7 @@ public sealed class WebSocketClientConnection(
     private ForegroundWindowState? _lastSentPcState;
     private ContextState? _lastSentContextState;
     private MediaState? _lastSentMediaState;
+    private AudioState? _lastSentAudioState;
     private int _isAuthenticated;
     private int _isReadyForBroadcasts;
 
@@ -54,6 +56,7 @@ public sealed class WebSocketClientConnection(
         ForegroundStateStore stateStore,
         ContextStateCoordinator contextStateCoordinator,
         IMediaSessionService mediaSessionService,
+        IAudioMixerService audioMixerService,
         ServerMessageFactory messageFactory,
         CancellationToken cancellationToken)
     {
@@ -69,6 +72,10 @@ public sealed class WebSocketClientConnection(
                 cancellationToken);
             await SendMediaStateCoreAsync(
                 mediaSessionService.Current,
+                messageFactory,
+                cancellationToken);
+            await SendAudioStateCoreAsync(
+                audioMixerService.Current,
                 messageFactory,
                 cancellationToken);
         }
@@ -137,6 +144,28 @@ public sealed class WebSocketClientConnection(
         try
         {
             await SendMediaStateCoreAsync(state, messageFactory, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public async Task SendAudioStateAsync(
+        AudioState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (!IsReadyForBroadcasts)
+        {
+            return;
+        }
+
+        await _sendLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            await SendAudioStateCoreAsync(state, messageFactory, cancellationToken);
         }
         finally
         {
@@ -234,6 +263,49 @@ public sealed class WebSocketClientConnection(
 
     private static long? ToMilliseconds(TimeSpan? value) =>
         value is null ? null : (long)value.Value.TotalMilliseconds;
+
+    private async Task SendAudioStateCoreAsync(
+        AudioState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (_lastSentAudioState is not null && _lastSentAudioState.HasSameMeaningAs(state))
+        {
+            return;
+        }
+
+        var outputDevice = state.OutputDevice is null
+            ? null
+            : new AudioOutputDevicePayload(
+                state.OutputDevice.DeviceId,
+                state.OutputDevice.FriendlyName,
+                state.OutputDevice.Volume,
+                state.OutputDevice.IsMuted);
+        var applications = state.Applications
+            .Select(application => new ApplicationAudioPayload(
+                application.ApplicationId,
+                application.ProcessIds,
+                application.ProcessName,
+                application.DisplayName,
+                application.Volume,
+                application.IsMuted,
+                application.State,
+                application.SessionCount,
+                application.HasMixedVolume,
+                application.HasMixedMute))
+            .ToArray();
+        var payload = new AudioStatePayload(
+            state.IsAvailable,
+            outputDevice,
+            applications,
+            state.Revision,
+            state.LastUpdatedUtc);
+
+        await SendCoreAsync(
+            messageFactory.Create(MessageTypes.AudioState, payload),
+            cancellationToken);
+        _lastSentAudioState = state;
+    }
 
     private async Task SendCoreAsync<TPayload>(
         ProtocolEnvelope<TPayload> message,

@@ -1,5 +1,6 @@
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
+const protocolVersion = "7";
 const mediaCommandIds = new Set([
     "media.play",
     "media.pause",
@@ -220,7 +221,7 @@ export class DashboardSocket {
                 case "server_hello":
                     this.#send("client_hello", createMessageId(), {
                         clientName: "browser-dashboard",
-                        protocolVersion: "6",
+                        protocolVersion,
                         authenticationToken: this.#token
                     });
                     this.#callbacks.onServerHello?.(message.payload);
@@ -238,6 +239,9 @@ export class DashboardSocket {
                     break;
                 case "media_state":
                     this.#callbacks.onMediaState?.(message.payload);
+                    break;
+                case "audio_state":
+                    this.#callbacks.onAudioState?.(message.payload);
                     break;
                 case "context_selection_result":
                     this.#callbacks.onContextSelectionResult?.(message.payload);

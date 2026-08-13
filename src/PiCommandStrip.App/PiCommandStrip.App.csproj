@@ -8,4 +8,8 @@
     <UserSecretsId>PiCommandStrip-4d454179-2fc2-48bb-9782-cbe79a47c779</UserSecretsId>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="NAudio.Wasapi" Version="2.3.0" />
+  </ItemGroup>
+
 </Project>

@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 6 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 7 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, and Windows system media-state publication, automatic/manual context selection, structured errors, and fixed allowlisted Notepad/media commands. Version 6 retains version 5 media controls and adds a local content-addressed artwork reference to media state; artwork bytes remain outside WebSocket messages.
+This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, automatic/manual context selection, structured errors, and fixed allowlisted Notepad/media commands. Version 7 adds `audio_state`; it adds no audio-control request and retains version 6 media artwork behavior unchanged.
 
 ## Transport
 
@@ -52,17 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "6",
+    "protocolVersion": "7",
     "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `6`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `7`.
 - `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
 
-The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 6 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 7 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -149,7 +149,7 @@ The allowlisted identifiers are:
 }
 ```
 
-`positionMilliseconds` must be a non-negative JSON integer. The server validates it again against the live media session's seek capability, duration, and seek range before converting the relative position to Windows timeline ticks. Unknown identifiers execute nothing and receive a failed `command_result`. A connection may attempt one command every two seconds; faster attempts receive a rate-limit result.
+`positionMilliseconds` must be a non-negative JSON integer. The server validates it again against the live media session's seek capability, duration, and seek range before converting the relative position to Windows timeline ticks. Unknown identifiers execute nothing and receive a failed `command_result`. A connection may attempt one command every configured cooldown period (750 milliseconds by default); faster attempts receive a rate-limit result.
 
 ## Server-to-client messages
 
@@ -164,7 +164,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "6",
+    "protocolVersion": "7",
     "maximumMessageSizeBytes": 16384,
     "availableContexts": [
       { "contextId": "default", "displayName": "Default" },
@@ -301,6 +301,51 @@ When no session is current, `hasActiveSession` is `false`, the identifier, sourc
 
 Media state is independent of `context_state` and is available in every context. Playing media does not select Media context. Foreground Spotify can still map to Media through process configuration, while foreground Firefox, Chrome, or Edge remains Browser / Research even when its current media session represents YouTube.
 
+### `audio_state`
+
+Reports the normalized state of the default multimedia render endpoint and its user-facing application groups. It is sent after `media_state` when a client authenticates and then only after a meaningful device, membership, volume, mute, metadata, or activity change.
+
+```json
+{
+  "type": "audio_state",
+  "messageId": "f3da68ce-54ec-46d6-94d2-cb597fca00d6",
+  "timestampUtc": "2026-08-10T12:00:03.0750000+00:00",
+  "payload": {
+    "isAvailable": true,
+    "outputDevice": {
+      "deviceId": "{0.0.0.00000000}.{example-device-id}",
+      "friendlyName": "Speakers (USB Audio Device)",
+      "volume": 0.72,
+      "isMuted": false
+    },
+    "applications": [
+      {
+        "applicationId": "9b88c63f4dd15f40d263d0ff745d5fc906422256178790824662f4a45e0cc880",
+        "processIds": [5312, 7420],
+        "processName": "firefox",
+        "displayName": "Firefox",
+        "volume": 0.5,
+        "isMuted": false,
+        "state": "active",
+        "sessionCount": 3,
+        "hasMixedVolume": true,
+        "hasMixedMute": false
+      }
+    ],
+    "revision": 14,
+    "lastUpdatedUtc": "2026-08-10T12:00:03.0740000+00:00"
+  }
+}
+```
+
+`volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 7.
+
+`applicationId` is a server-generated SHA-256 identifier for the grouping key. It is stable while the grouping evidence is stable and never exposes a process path or raw Windows session identifier. `sessionCount` shows how many underlying Windows controls contribute to the entry. `hasMixedVolume` and `hasMixedMute` indicate that those controls disagree. The reported grouped volume is the maximum member scalar, and grouped `isMuted` is true only when every member is muted.
+
+When no default output is available, `isAvailable` is `false`, `outputDevice` is `null`, and `applications` is empty. `revision` starts at zero and increases monotonically for this host process whenever the normalized meaning changes. `lastUpdatedUtc` records that meaningful observation; timestamp-only samples do not produce a message.
+
+Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 7 provides no audio command or writable field.
+
 ### `context_selection_result`
 
 Correlates the outcome of a `context_selection_request`. A valid request receives a successful result even if that mode/context was already active; state is broadcast only when its meaningful value changed.
@@ -375,10 +420,10 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` with protocol version 6, its fresh UTC timestamp, and the configured token.
+4. The dashboard sends `client_hello` with protocol version 7, its fresh UTC timestamp, and the configured token.
 5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
-6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, and `media_state` snapshots in that order.
-7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, and media changes are broadcast independently.
+6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, and `audio_state` snapshots in that order.
+7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, and audio changes are broadcast independently.
 8. The server reads complete messages, validates them, and dispatches only recognized typed records.
 9. Either peer may initiate the normal WebSocket close handshake.
 10. Application shutdown cancels active receive and polling operations and attempts a bounded close before releasing each socket.
