@@ -1,10 +1,10 @@
-import { AudioMixerController } from "./audio-mixer.js?v=13";
+import { AudioMixerController } from "./audio-mixer.js?v=15";
 import {
     buildContextComposition,
     ContextCompositionController
-} from "./context-composition.js?v=13";
-import { NowPlayingController } from "./now-playing.js?v=13";
-import { SpotifyControlsController } from "./spotify-controls.js?v=13";
+} from "./context-composition.js?v=15";
+import { NowPlayingController } from "./now-playing.js?v=15";
+import { SpotifyControlsController } from "./spotify-controls.js?v=15";
 
 const elements = {
     activityAnnouncer: document.querySelector("#activity-announcer"),
@@ -116,6 +116,7 @@ let latestMediaState;
 let latestAudioState;
 let latestPcState;
 let latestSpotifyState;
+let latestBrowserState;
 let layoutDebugEnabled = false;
 let manualPingPending = false;
 let mediaCommandPending = false;
@@ -242,12 +243,7 @@ function workspaceContent(composition) {
             description: "Master output, device selection, and current application sessions.",
             actions: []
         },
-        browser: {
-            eyebrow: "Browser / Research",
-            title: "Research surface",
-            description: "Browser tools can compose here later. Media is promoted only when the foreground browser can be identified as its owner.",
-            actions: []
-        },
+        browser: browserWorkspaceDefinition(),
         gaming: {
             eyebrow: "Gaming context",
             title: "Priority game mix",
@@ -281,6 +277,32 @@ function workspaceContent(composition) {
     elements.workspaceDescription.textContent = definition.description;
     elements.workspaceProcess.textContent = process;
     renderContextActions(definition.actions);
+}
+
+function browserWorkspaceDefinition() {
+    const browserConnected = latestBrowserState?.connectionState === "connected";
+    if (!browserConnected) {
+        return {
+            eyebrow: "Browser / Research · Bridge offline",
+            title: "Firefox context",
+            description: "The local Firefox bridge is not connected. Foreground context continues to work.",
+            actions: []
+        };
+    }
+
+    const title = latestBrowserState.pageTitle ||
+        latestBrowserState.hostName ||
+        "Firefox connected";
+    const host = latestBrowserState.hostName || "Internal or restricted Firefox page";
+    const selection = latestBrowserState.hasSelectedText
+        ? "Text selected"
+        : "No text selected";
+    return {
+        eyebrow: "Browser / Research · Firefox connected",
+        title,
+        description: `${host} · ${selection}`,
+        actions: []
+    };
 }
 
 function renderWorkspace() {
@@ -472,6 +494,11 @@ export const dashboardUi = {
     renderSpotifyState(state) {
         latestSpotifyState = state;
         spotifyControls.setState(state);
+    },
+
+    renderBrowserState(state) {
+        latestBrowserState = state;
+        renderWorkspace();
     },
 
     setProtocolVersion(version) {

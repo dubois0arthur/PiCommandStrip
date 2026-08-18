@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.AudioMixer;
+using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.Configuration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
@@ -35,6 +36,7 @@ public sealed class WebSocketAuthenticationTests
         Assert.Contains(MessageTypes.MediaState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.AudioState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.SpotifyState, fixture.Socket.SentMessageTypes);
+        Assert.Contains(MessageTypes.BrowserState, fixture.Socket.SentMessageTypes);
     }
 
     [Fact]
@@ -176,6 +178,7 @@ public sealed class WebSocketAuthenticationTests
             new StubMediaSessionService(timeProvider),
             new StubAudioMixerService(timeProvider),
             new StubSpotifyService(timeProvider),
+            new StubBrowserIntegrationService(timeProvider),
             commandDispatcher,
             new ClientAuthenticationService(ValidToken, timeProvider),
             new AuthenticationAttemptLimiter(timeProvider),
@@ -346,6 +349,29 @@ public sealed class WebSocketAuthenticationTests
             LastPositionMilliseconds = invocation.PositionMilliseconds;
             return Task.FromResult(PcCommandExecutionResult.Success("Command completed."));
         }
+    }
+
+    private sealed class StubBrowserIntegrationService(TimeProvider timeProvider)
+        : IBrowserIntegrationService
+    {
+        public BrowserState Current { get; } = BrowserState.Disconnected(timeProvider.GetUtcNow());
+
+        public Task BeginConnectionAsync(
+            Guid connectionId,
+            BrowserIdentity identity,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task ApplyObservationAsync(
+            Guid connectionId,
+            BrowserTabObservation observation,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task EndConnectionAsync(Guid connectionId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task SetBrowserContextActiveAsync(
+            bool isActive,
+            CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class StubSpotifyService(TimeProvider timeProvider) : ISpotifyService

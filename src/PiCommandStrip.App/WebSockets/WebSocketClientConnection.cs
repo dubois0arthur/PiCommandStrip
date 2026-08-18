@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using PiCommandStrip.App.AudioMixer;
+using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
@@ -23,6 +24,7 @@ public sealed class WebSocketClientConnection(
     private MediaState? _lastSentMediaState;
     private AudioState? _lastSentAudioState;
     private SpotifyState? _lastSentSpotifyState;
+    private BrowserState? _lastSentBrowserState;
     private int _isAuthenticated;
     private int _isReadyForBroadcasts;
 
@@ -65,6 +67,7 @@ public sealed class WebSocketClientConnection(
         IMediaSessionService mediaSessionService,
         IAudioMixerService audioMixerService,
         ISpotifyService spotifyService,
+        IBrowserIntegrationService browserIntegrationService,
         ServerMessageFactory messageFactory,
         CancellationToken cancellationToken)
     {
@@ -88,6 +91,10 @@ public sealed class WebSocketClientConnection(
                 cancellationToken);
             await SendSpotifyStateCoreAsync(
                 spotifyService.Current,
+                messageFactory,
+                cancellationToken);
+            await SendBrowserStateCoreAsync(
+                browserIntegrationService.Current,
                 messageFactory,
                 cancellationToken);
         }
@@ -200,6 +207,27 @@ public sealed class WebSocketClientConnection(
         try
         {
             await SendSpotifyStateCoreAsync(state, messageFactory, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public async Task SendBrowserStateAsync(
+        BrowserState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (!IsReadyForBroadcasts)
+        {
+            return;
+        }
+
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await SendBrowserStateCoreAsync(state, messageFactory, cancellationToken);
         }
         finally
         {
@@ -389,6 +417,35 @@ public sealed class WebSocketClientConnection(
             messageFactory.Create(MessageTypes.SpotifyState, payload),
             cancellationToken);
         _lastSentSpotifyState = state;
+    }
+
+    private async Task SendBrowserStateCoreAsync(
+        BrowserState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (_lastSentBrowserState is not null && _lastSentBrowserState.HasSameMeaningAs(state))
+        {
+            return;
+        }
+
+        var payload = new BrowserStatePayload(
+            state.ConnectionState,
+            state.BrowserType,
+            state.SourceIdentifier,
+            state.InstanceIdentifier,
+            state.ActiveTabId,
+            state.Url,
+            state.HostName,
+            state.PageTitle,
+            !string.IsNullOrEmpty(state.SelectedText),
+            state.CanGoBack,
+            state.CanGoForward,
+            state.LastUpdatedUtc);
+        await SendCoreAsync(
+            messageFactory.Create(MessageTypes.BrowserState, payload),
+            cancellationToken);
+        _lastSentBrowserState = state;
     }
 
     private async Task SendCoreAsync<TPayload>(

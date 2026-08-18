@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.AudioMixer;
+using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
@@ -20,6 +21,7 @@ public sealed class WebSocketConnectionHandler(
     IMediaSessionService mediaSessionService,
     IAudioMixerService audioMixerService,
     ISpotifyService spotifyService,
+    IBrowserIntegrationService browserIntegrationService,
     IPcCommandDispatcher commandDispatcher,
     ClientAuthenticationService authenticationService,
     AuthenticationAttemptLimiter authenticationAttemptLimiter,
@@ -197,6 +199,7 @@ public sealed class WebSocketConnectionHandler(
                     mediaSessionService,
                     audioMixerService,
                     spotifyService,
+                    browserIntegrationService,
                     messageFactory,
                     cancellationToken);
                 return;

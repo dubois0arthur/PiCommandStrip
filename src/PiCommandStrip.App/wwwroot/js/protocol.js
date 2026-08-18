@@ -1,6 +1,6 @@
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
-const protocolVersion = "10";
+const protocolVersion = "11";
 const mediaCommandIds = new Set([
     "media.play",
     "media.pause",
@@ -325,6 +325,9 @@ export class DashboardSocket {
                     break;
                 case "spotify_state":
                     this.#callbacks.onSpotifyState?.(message.payload);
+                    break;
+                case "browser_state":
+                    this.#callbacks.onBrowserState?.(message.payload);
                     break;
                 case "context_selection_result":
                     this.#callbacks.onContextSelectionResult?.(message.payload);

@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 10 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 11 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, optional Spotify enrichment state, automatic/manual context selection, structured errors, and fixed allowlisted commands. Version 10 adds optional Spotify library/shuffle/repeat commands and enrichment state while retaining version 9 output selection and all generic media behavior.
+This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, optional Spotify enrichment state, optional Firefox browser state, automatic/manual context selection, structured errors, and fixed allowlisted commands. Version 11 adds browser enrichment while retaining version 10 Spotify behavior and all generic media/audio behavior.
 
 ## Transport
 
@@ -52,17 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "10",
+    "protocolVersion": "11",
     "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `10`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `11`.
 - `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
 
-The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 10 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 11 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -207,7 +207,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "10",
+    "protocolVersion": "11",
     "maximumMessageSizeBytes": 16384,
     "availableContexts": [
       { "contextId": "default", "displayName": "Default" },
@@ -395,13 +395,13 @@ Reports the normalized state of the default multimedia render endpoint and its u
 }
 ```
 
-`outputDevices` contains the currently usable Windows render endpoints. `deviceId` is the stable opaque Core Audio endpoint ID, `friendlyName` is display text, `state` is currently `active` for a usable entry, and exactly the observed Multimedia default is marked with `isDefault`. Device IDs are not filesystem paths and the selector never treats them as executable input. Application `volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. Application `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 10.
+`outputDevices` contains the currently usable Windows render endpoints. `deviceId` is the stable opaque Core Audio endpoint ID, `friendlyName` is display text, `state` is currently `active` for a usable entry, and exactly the observed Multimedia default is marked with `isDefault`. Device IDs are not filesystem paths and the selector never treats them as executable input. Application `volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. Application `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 11.
 
 `applicationId` is a server-generated SHA-256 identifier for the grouping key. It is stable while the grouping evidence is stable and never exposes a process path or raw Windows session identifier. `sessionCount` shows how many underlying Windows controls contribute to the entry. `hasMixedVolume` and `hasMixedMute` indicate that those controls disagree. The reported grouped volume is the maximum member scalar, and grouped `isMuted` is true only when every member is muted.
 
 When no default output is available, `isAvailable` is `false`, `outputDevice` is `null`, and `applications` is empty. `outputDevices` can still contain active endpoints that may establish a new default. `revision` starts at zero and increases monotonically for this host process whenever the normalized meaning changes, including endpoint arrival/removal and default-role changes. `lastUpdatedUtc` records that meaningful observation; timestamp-only samples do not produce a message.
 
-Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 10 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative. The device selector shows processing feedback but does not mark a choice current until an authoritative state identifies it as the default.
+Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 11 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative. The device selector shows processing feedback but does not mark a choice current until an authoritative state identifies it as the default.
 
 ### `spotify_state`
 
@@ -438,6 +438,38 @@ Reports optional Spotify-only enrichment. It is sent to a newly authenticated cl
 `status` is `unconfigured`, `unauthenticated`, `idle`, `available`, `rate_limited`, or `error`. Controls render only when `appliesToCurrentMedia` is true, which requires an explicit Spotify Windows media source and an exact normalized title match against Spotify's current Web API item. This deliberately conservative join prevents a browser or another player from receiving Spotify controls. Queue entries are capped at five. Server-only Spotify item URIs and match evidence are never serialized.
 
 An enrichment error may retain the last matched values for readable degraded state while setting `status` to `error` or `rate_limited`; controls are disabled until recovery. `retryAfterUtc` is present only when Spotify supplies a rate-limit delay. `unconfigured`, `unauthenticated`, and non-Spotify `idle` states do not affect generic `media_state` or any `media.*` command.
+
+### `browser_state`
+
+Reports optional browser enrichment retained by `IBrowserIntegrationService`. A newly authenticated Pi dashboard receives the current state after the Spotify snapshot. Meaningful extension connect, active-tab, URL/title, selection-presence, and disconnect changes are then broadcast independently.
+
+```json
+{
+  "type": "browser_state",
+  "messageId": "b3da68ce-54ec-46d6-94d2-cb597fca00d8",
+  "timestampUtc": "2026-08-18T12:00:03.1000000+00:00",
+  "payload": {
+    "connectionState": "connected",
+    "browserType": "firefox",
+    "sourceIdentifier": "firefox-bridge@picommandstrip.local",
+    "instanceIdentifier": "cc1467f2-622a-4a7d-9eae-531044ac9d20",
+    "activeTabId": 42,
+    "url": "https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions",
+    "hostName": "developer.mozilla.org",
+    "pageTitle": "Browser extensions - Mozilla | MDN",
+    "hasSelectedText": false,
+    "canGoBack": null,
+    "canGoForward": null,
+    "lastUpdatedUtc": "2026-08-18T12:00:03.0990000+00:00"
+  }
+}
+```
+
+`connectionState` is `connected` or `disconnected`. Browser/source/instance identify the producer but are not authentication credentials. Firefox tab IDs are valid only for the current browser session and may be reused. `url` is either a sanitized absolute HTTP/HTTPS URL or `null`: URI user information and fragments are removed before publication. `hostName` is derived server-side and IDN-normalized. Restricted/internal pages can therefore report only a title or no page metadata.
+
+Selected text content never appears in this protocol. The extension-to-host bridge can supply a bounded string to the Windows-only memory model, but this message exposes only `hasSelectedText`. `canGoBack` and `canGoForward` are nullable because Firefox currently offers the operations without a reliable non-mutating availability query.
+
+A disconnected state has `connectionState: "disconnected"`, `hasSelectedText: false`, and `null` for every other browser field. Browser state does not select Browser / Research context; the existing foreground-process resolver remains authoritative. See [browser-integration.md](browser-integration.md) for the separate localhost protocol, pairing, permissions, and privacy boundary.
 
 ### `context_selection_result`
 
@@ -513,10 +545,10 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` with protocol version 10, its fresh UTC timestamp, and the configured token.
+4. The dashboard sends `client_hello` with protocol version 11, its fresh UTC timestamp, and the configured token.
 5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
-6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, and `audio_state` snapshots in that order.
-7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, and audio changes are broadcast independently.
+6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, `audio_state`, `spotify_state`, and `browser_state` snapshots in that order.
+7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, audio, Spotify, and browser changes are broadcast independently.
 8. The server reads complete messages, validates them, and dispatches only recognized typed records.
 9. Either peer may initiate the normal WebSocket close handshake.
 10. Application shutdown cancels active receive and polling operations and attempts a bounded close before releasing each socket.

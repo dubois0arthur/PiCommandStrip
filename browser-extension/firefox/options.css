@@ -1,0 +1,25 @@
+:root {
+    color-scheme: dark;
+    font: 15px/1.45 system-ui, sans-serif;
+    background: #0b1112;
+    color: #e4eeee;
+}
+
+body { margin: 0; }
+main { max-width: 34rem; padding: 1.25rem; }
+h1 { margin-top: 0; color: #bcff55; }
+form { display: grid; gap: .65rem; margin: 1.25rem 0; }
+input, button {
+    box-sizing: border-box;
+    min-height: 2.75rem;
+    border: 1px solid #48605f;
+    border-radius: .35rem;
+    background: #121c1d;
+    color: inherit;
+    padding: .6rem .75rem;
+}
+button { background: #294b43; cursor: pointer; font-weight: 700; }
+.note { color: #9aacab; }
+#status[data-state="connected"] { color: #bcff55; }
+#status[data-state="authentication_failed"],
+#status[data-state="error"] { color: #ff9d8d; }

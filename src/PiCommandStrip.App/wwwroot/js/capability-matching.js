@@ -123,6 +123,14 @@ export function mediaBelongsToForeground(
         return true;
     }
 
+    // A recognized but different source is affirmative evidence that the media
+    // belongs elsewhere. The title heuristic is reserved for opaque Windows
+    // media sources; otherwise a Spotify title repeated in a browser tab could
+    // incorrectly expose the browser's volume control.
+    if (sourceFamily) {
+        return false;
+    }
+
     return browserFamilies.has(foregroundFamily) &&
         titleIdentifiesForegroundMedia(mediaState, foregroundWindowTitle);
 }

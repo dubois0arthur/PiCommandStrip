@@ -23,6 +23,15 @@ public sealed class WebSocketMessageReader
 
     public async Task<ReceivedWebSocketMessage> ReadAsync(
         WebSocket socket,
+        CancellationToken cancellationToken) =>
+        await ReadAsync(
+            socket,
+            Protocol.ProtocolConstants.MaximumMessageSizeBytes,
+            cancellationToken);
+
+    public async Task<ReceivedWebSocketMessage> ReadAsync(
+        WebSocket socket,
+        int maximumMessageSizeBytes,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[ReceiveBufferSizeBytes];
@@ -41,7 +50,7 @@ public sealed class WebSocketMessageReader
 
             messageType ??= result.MessageType;
 
-            if (!tooLarge && message.WrittenCount + result.Count <= Protocol.ProtocolConstants.MaximumMessageSizeBytes)
+            if (!tooLarge && message.WrittenCount + result.Count <= maximumMessageSizeBytes)
             {
                 message.Write(buffer.AsSpan(0, result.Count));
             }

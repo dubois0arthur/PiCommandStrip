@@ -13,6 +13,8 @@ public sealed class PiCommandStripOptions
     public ContextOptions Contexts { get; init; } = new();
 
     public SpotifyOptions Spotify { get; init; } = new();
+
+    public BrowserIntegrationOptions BrowserIntegration { get; init; } = new();
 }
 
 public sealed class NetworkOptions
@@ -49,6 +51,15 @@ public sealed class SpotifyOptions
     public string ClientSecret { get; init; } = string.Empty;
 
     public string RedirectUri { get; init; } = string.Empty;
+}
+
+public sealed class BrowserIntegrationOptions
+{
+    public bool Enabled { get; init; }
+
+    public int Port { get; init; } = 5078;
+
+    public string Token { get; init; } = string.Empty;
 }
 
 public sealed record ValidatedNetworkOptions(bool LanEnabled, IPAddress ListenAddress, int Port)

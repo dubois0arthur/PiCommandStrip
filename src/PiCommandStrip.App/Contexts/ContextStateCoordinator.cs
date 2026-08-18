@@ -1,4 +1,5 @@
 using PiCommandStrip.App.ForegroundWindows;
+using PiCommandStrip.App.BrowserIntegration;
 
 namespace PiCommandStrip.App.Contexts;
 
@@ -9,7 +10,8 @@ public interface IContextStateBroadcaster
 
 public sealed class ContextStateCoordinator(
     ContextStateStore stateStore,
-    IContextStateBroadcaster broadcaster)
+    IContextStateBroadcaster broadcaster,
+    IBrowserIntegrationService? browserIntegrationService = null)
 {
     private readonly SemaphoreSlim _updateLock = new(1, 1);
 
@@ -45,6 +47,12 @@ public sealed class ContextStateCoordinator(
             var result = update();
             if (result.Changed)
             {
+                if (browserIntegrationService is not null)
+                {
+                    await browserIntegrationService.SetBrowserContextActiveAsync(
+                        result.State.ContextId == ContextIds.Browser,
+                        cancellationToken);
+                }
                 await broadcaster.BroadcastAsync(result.State, cancellationToken);
             }
 

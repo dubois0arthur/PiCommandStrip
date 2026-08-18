@@ -1,5 +1,6 @@
 using PiCommandStrip.App.Authentication;
 using PiCommandStrip.App.AudioMixer;
+using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.Configuration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.ForegroundWindows;
@@ -40,9 +41,18 @@ var piCommandStripOptions = builder.Configuration
     ?? throw new InvalidOperationException("PiCommandStrip configuration is required.");
 var networkOptions = PiCommandStripOptionsValidator.ValidateNetwork(piCommandStripOptions.Network);
 var commandCooldown = PiCommandStripOptionsValidator.ValidateCommandCooldown(piCommandStripOptions.Commands);
+var browserIntegrationConfiguration = BrowserIntegrationConfiguration.Create(
+    piCommandStripOptions.BrowserIntegration,
+    networkOptions.Port);
 
 builder.WebHost.ConfigureKestrel(options =>
-    options.Listen(networkOptions.ListenAddress, networkOptions.Port));
+{
+    options.Listen(networkOptions.ListenAddress, networkOptions.Port);
+    if (browserIntegrationConfiguration.Enabled)
+    {
+        options.ListenLocalhost(browserIntegrationConfiguration.Port);
+    }
+});
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -58,6 +68,7 @@ builder.Services.AddSingleton<HealthResponseFactory>();
 builder.Services.AddSpotifyIntegration(piCommandStripOptions.Spotify, networkOptions.Port);
 builder.Services.AddPcCommands();
 builder.Services.AddPiCommandStripWebSockets(commandCooldown);
+builder.Services.AddBrowserIntegration(browserIntegrationConfiguration);
 builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
 builder.Services.AddForegroundWindowMonitoring();
 builder.Services.AddWindowsMediaSessionMonitoring();
@@ -89,6 +100,7 @@ app.MapGet("/health", (HealthResponseFactory healthResponseFactory) =>
     Results.Ok(healthResponseFactory.Create()));
 app.MapMediaArtwork();
 app.MapSpotifyOAuth();
+app.MapBrowserIntegration();
 app.MapPiCommandStripWebSocket();
 
 app.Run();

@@ -1,5 +1,5 @@
-import { DashboardSocket } from "./protocol.js?v=13";
-import { dashboardUi } from "./ui.js?v=13";
+import { DashboardSocket } from "./protocol.js?v=15";
+import { dashboardUi } from "./ui.js?v=15";
 
 const automaticPingIntervalMilliseconds = 10000;
 const tokenStorageKey = "pi-command-strip-token";
@@ -210,6 +210,29 @@ function applySpotifyFixture(state) {
     };
 }
 
+function applyBrowserFixture(state) {
+    if (!["browser-owned", "browser-foreign"].includes(layoutFixture)) {
+        return state;
+    }
+
+    return {
+        connectionState: "connected",
+        browserType: "firefox",
+        sourceIdentifier: "firefox-bridge@picommandstrip.local",
+        instanceIdentifier: "layout-fixture",
+        activeTabId: 42,
+        url: "https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions",
+        hostName: "developer.mozilla.org",
+        pageTitle: layoutFixture === "browser-owned"
+            ? "A practical browser media session — YouTube"
+            : "PiCommandStrip research — Mozilla Firefox",
+        hasSelectedText: layoutFixture === "browser-foreign",
+        canGoBack: null,
+        canGoForward: null,
+        lastUpdatedUtc: new Date().toISOString()
+    };
+}
+
 function readStoredToken() {
     try {
         return sessionStorage.getItem(tokenStorageKey);
@@ -281,6 +304,10 @@ const dashboardSocket = new DashboardSocket({
 
     onSpotifyState(state) {
         dashboardUi.renderSpotifyState(applySpotifyFixture(state));
+    },
+
+    onBrowserState(state) {
+        dashboardUi.renderBrowserState(applyBrowserFixture(state));
     },
 
     onContextSelectionResult(result) {

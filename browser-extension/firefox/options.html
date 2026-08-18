@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PiCommandStrip Firefox Bridge</title>
+    <link rel="stylesheet" href="options.css">
+</head>
+<body>
+    <main>
+        <h1>PiCommandStrip bridge</h1>
+        <p>Pair this Firefox profile with the loopback-only bridge on the Windows PC.</p>
+        <form id="settings-form">
+            <label for="pairing-token">Browser pairing token</label>
+            <input id="pairing-token" type="password" autocomplete="off" spellcheck="false" required>
+            <label for="bridge-port">Loopback port</label>
+            <input id="bridge-port" type="number" min="1024" max="65535" value="5078" required>
+            <button type="submit">Save and connect</button>
+        </form>
+        <p class="note">This is separate from the Pi dashboard token. The host is fixed to 127.0.0.1.</p>
+        <p id="status" role="status" aria-live="polite">Loading…</p>
+    </main>
+    <script src="options.js"></script>
+</body>
+</html>

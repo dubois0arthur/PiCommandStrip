@@ -11,6 +11,7 @@ Implemented features include:
 - Windows Core Audio output-device/application-session discovery with normalized change-only mixer state and touch output selection;
 - capability-aware Windows media controls and a touch-oriented Now Playing interface;
 - optional Spotify saved-state, shuffle, repeat, queue, and playback-device enrichment;
+- optional Firefox active-tab and selected-text-presence enrichment through a loopback-only bridge;
 - generic Default, Media, Browser / Research, Gaming, and Audio context profiles;
 - automatic process-based context switching plus authenticated manual pinning;
 - fixed server-allowlisted Notepad and media commands with a per-connection cooldown;
@@ -98,6 +99,32 @@ Media is the primary workspace in Media context and in Default when no more usef
 The normal interface is a compact status header, one dynamic workspace, and a small Home/Media/Audio/More navigation row. Foreground process is supporting metadata rather than the main panel. PID, context age, manual RTT, and manual context selection live in System Details. Prototype Notepad and latency cards are no longer primary controls; ordinary command outcomes appear as accessible transient feedback instead of permanent result panels.
 
 Contexts compose the same media and audio capabilities rather than owning separate implementations. Media and media-owning Browser views add a matched application-volume row beneath expanded Now Playing; Gaming orders a compact mixer as foreground game, Discord, matched media, then other active sessions; Default promotes media when present and otherwise offers master output. Matching prefers exact normalized process/source names and the small known application-family map. Browser title matching is used only to establish ownership when Windows publishes an opaque media source. If a candidate is missing or non-unique, PiCommandStrip omits the inline volume control instead of risking the wrong application; the full Audio destination remains available.
+
+## Optional Firefox browser bridge
+
+The Firefox extension in `browser-extension/firefox` enriches Browser / Research context with the active page title, HTTP(S) URL/hostname, tab ID, and whether the active page currently has selected text. It never sends page bodies or browsing history. Selected text is capped, kept only in memory on the Windows host, cleared on tab/navigation/disconnect changes, and represented to the Pi only as `hasSelectedText`; its contents are not logged or sent over the LAN.
+
+Generate a separate browser-pairing token and store it in Windows User Secrets:
+
+```powershell
+[byte[]]$browserTokenBytes = New-Object byte[] 32
+$browserRandom = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+    $browserRandom.GetBytes($browserTokenBytes)
+    $browserPairingToken = [Convert]::ToBase64String($browserTokenBytes)
+} finally {
+    $browserRandom.Dispose()
+}
+
+$browserPairingToken
+dotnet user-secrets set "PiCommandStrip:BrowserIntegration:Enabled" "true" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+dotnet user-secrets set "PiCommandStrip:BrowserIntegration:Port" "5078" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+dotnet user-secrets set "PiCommandStrip:BrowserIntegration:Token" "$browserPairingToken" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+```
+
+Restart PiCommandStrip. In Firefox 147 or newer, open `about:debugging`, choose **This Firefox**, select **Load Temporary Add-on**, and choose `browser-extension/firefox/manifest.json`. Then open the extension's Preferences from `about:addons`, paste the browser-pairing token, leave port `5078`, and save. Temporary extensions are removed when Firefox restarts; a permanent distribution would require Mozilla signing and a review of its local insecure-WebSocket policy.
+
+The extension connects only to `ws://127.0.0.1:5078/browser-integration/ws`. The server also verifies that both socket endpoints are loopback and that the WebSocket origin is an extension origin (`moz-extension://` now, with `chrome-extension://` reserved for a future Chromium producer). This endpoint is not reachable through the PiCommandStrip LAN listener, accepts no commands, uses an 8 KiB message cap and a separate failed-pairing limiter, and does not reuse the Pi dashboard token. See [the browser integration guide](docs/browser-integration.md) for permissions, privacy details, protocol fields, and verification steps.
 
 ## Optional Spotify enrichment
 

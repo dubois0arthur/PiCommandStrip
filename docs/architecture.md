@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture through the optional Spotify enrichment layer, touchscreen Windows audio mixer and output selector, context-aware workspace, and local media-artwork support. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 10 adds Spotify-only library/shuffle/repeat state while retaining generic Windows media authority, authentication, reconnection, command security, and LAN boundaries.
+This document describes the architecture through the optional Spotify enrichment layer, touchscreen Windows audio mixer and output selector, context-aware workspace, local media-artwork support, and Firefox browser bridge. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 11 adds normalized browser state while retaining generic Windows media authority, authentication, reconnection, command security, and LAN boundaries.
 
 ## System shape
 
@@ -26,6 +26,8 @@ Windows PC
 |             +-- encrypted host refresh credential                |
 |                                                                  |
 |  Windows Core Audio --> audio mixer service --> audio store ------|
+|                                                                  |
+|  Firefox extension -- loopback-only bridge --> browser store -----|
 |                                                                  |
 |  fixed command allowlist <--> command dispatcher ----------------|
 +------------------------------------------------------------------+
@@ -123,6 +125,21 @@ The minimum scopes are `user-read-playback-state` (current item, device, queue, 
 
 Media and audio remain separate even when both describe Spotify or a browser. A media session answers “what is playing?” and follows the one session Windows considers current; it contains title, artist, artwork, timeline, and transport capabilities. An audio session answers “which render streams exist on this output?” and contains endpoint, volume, mute, process, and activity state. There may be many audio sessions for one media application, and many audio sessions with no media metadata at all.
 
+### Optional Firefox browser integration
+
+- `IBrowserIntegrationService` exposes normalized browser state without making context, protocol, or frontend code depend on WebExtension details.
+- A separate Kestrel listener is added only when browser integration is enabled. It uses `ListenLocalhost` on the configured bridge port (5078 by default). `/browser-integration/ws` additionally verifies loopback local/remote addresses, the exact listener port, and a WebExtension origin (`moz-extension://`, with `chrome-extension://` reserved for a future producer); the route returns `404` through the dashboard/LAN listener.
+- The bridge has its own 32-byte Base64 pairing token and failed-authentication limiter. It does not accept the Pi token, and the extension never receives the Pi token. Pairing timestamps are fresh-only and tokens are compared in constant time.
+- The extension protocol accepts only `browser_hello` and `browser_state_update`. It has an independent version, an 8 KiB message limit, exact JSON shapes, and no command type.
+- `BrowserStateNormalizer` accepts only HTTP/HTTPS URLs, removes URI user information and fragments, derives an IDN-normalized hostname, and bounds title/URL/selection fields. Selected-text truncation avoids leaving an unmatched UTF-16 high surrogate.
+- Selected text remains in Windows memory only and is never logged. The Pi protocol carries only `hasSelectedText`, although the normalized host model retains bounded text for future fixed, consented actions.
+- `BrowserIntegrationService` serializes connection/update/disconnect transitions. The newest authenticated Firefox instance becomes authoritative, and an old socket cannot clear newer state when it eventually disconnects.
+- `BrowserStateStore` suppresses timestamp-only/duplicate changes. Connect, meaningful tab/title/URL/selection changes, and disconnect are broadcast to authenticated Pi clients; disconnect clears all tab and selection data.
+
+Foreground-window detection and context resolution remain unchanged. Foreground Firefox still selects Browser / Research through process configuration; browser state only enriches that workspace. If the extension is disabled, unpaired, asleep, or disconnected, Browser context and every existing media/audio feature continue to work.
+
+The Firefox extension uses Manifest V3 `background.scripts`, `tabs`, `storage`, and top-frame HTTP/HTTPS content scripts. It observes active-tab events and selection changes rather than polling. Firefox provides navigation operations but not a dependable non-mutating capability query, so `canGoBack` and `canGoForward` are nullable and currently unknown. The bridge is intentionally shaped so a later Chromium extension can produce the same two fixed messages; it is not a plugin framework.
+
 Application grouping uses the following priority:
 
 1. A normalized process name groups ordinary sessions, including multiple process IDs for applications such as browsers.
@@ -132,11 +149,11 @@ Application grouping uses the following priority:
 
 One `ApplicationAudioState` therefore carries a stable hashed `ApplicationId`, zero or more process IDs, user-facing metadata, aggregate state, session count, mixed-volume/mute flags, and the underlying session-instance IDs retained only on the server. The displayed volume is the maximum member volume so an audible member is not hidden; displayed mute is true only when every member is muted. Audio commands resolve the application ID back to every current underlying session and set them together. Raw session identifiers—which can contain implementation details—are not serialized to the browser.
 
-Peak level is deliberately omitted from version 10. Core Audio exposes inexpensive meters, but a useful meter requires frequent sampling and would conflict with change-only WebSocket state. It can be added later as a separately paced signal if the physical mixer UI demonstrates that need.
+Peak level is deliberately omitted from the current protocol. Core Audio exposes inexpensive meters, but a useful meter requires frequent sampling and would conflict with change-only WebSocket state. It can be added later as a separately paced signal if the physical mixer UI demonstrates that need.
 
 ### State and connection coordinator
 
-- Retains the latest foreground, context, media, audio, and optional Spotify states so a newly authenticated dashboard receives immediate snapshots.
+- Retains the latest foreground, context, media, audio, optional Spotify, and optional browser states so a newly authenticated dashboard receives immediate snapshots.
 - Tracks active WebSocket connections needed for broadcasting.
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
@@ -152,7 +169,7 @@ The implementation separates the latest-state stores from a `ConcurrentDictionar
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 10 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, `audio_state`, and `spotify_state` snapshots. Spotify state is enrichment only; Windows media/audio events continue to update independently.
+The implemented version 11 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, `audio_state`, `spotify_state`, and `browser_state` snapshots. Spotify and browser state are enrichment only; Windows foreground/media/audio events continue to update independently.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -184,6 +201,7 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Displays generic media title, artist when available, source application, capability-aware transport controls, current/total time, and a touch-friendly seek range without assuming every item is music.
 - Mounts the same compact Spotify accessory in both Now Playing variants only when server state confidently applies. Like, shuffle, and repeat are primary; an expanded queue overlay and current device label are secondary. These commands are independent from generic media buttons, so API latency cannot delay Windows transport controls.
 - Renders a dedicated Audio workspace with one compact master-output section and an internally scrolling application list. The current output name is a touch button that opens an overlaid, internally bounded endpoint selector, so the list consumes no permanent mixer height. Active sessions sort first; inactive sessions remain available without receiving oversized cards. The document header and navigation never scroll.
+- Enriches the Browser / Research workspace with Firefox bridge connectivity, active page title, hostname, and selected-text presence. Selected content is never rendered or sent to the Pi.
 - Uses one `AudioMixerController` command path plus exported reusable volume/mute controllers for the full Audio page and context-composed rows. Slider thumbs update immediately, samples are coalesced to at most one send every 160 ms, and release schedules one final value after the short server safety gap.
 - Keeps authoritative Windows values separate from the local value under the user's finger. Incoming audio state updates metadata immediately but cannot move an actively dragged thumb. A matching post-command state clears the optimistic value; failures or a short reconciliation timeout restore the latest authoritative value.
 - Keeps output selection authoritative as well: tapping an endpoint immediately shows `Switching…`, but the check mark and current name change only when a later `audio_state` marks that endpoint as default. Failure restores the previous label and uses the existing accessible error feedback. The compact Audio navigation item remains the uncluttered global entry point rather than duplicating an endpoint list outside the Audio page.
@@ -257,6 +275,16 @@ The finalized, direction-specific UTF-8 JSON envelopes and payload examples are 
 
 Pins are intentionally in-memory and server-wide for this single-user, shared-token appliance. They reset to Automatic when the host restarts. Per-user persistence would require identity and storage requirements that are outside this milestone.
 
+### Browser state
+
+1. Firefox observes active-tab activation, URL/title/status changes, focused-window changes, tab removal, and top-frame selection changes using WebExtensions events.
+2. The event page coalesces nearby events, builds one full state snapshot, and compares it with the last sent meaning. It performs no high-frequency polling and sends no page body/history.
+3. The extension authenticates to `ws://127.0.0.1:5078/browser-integration/ws` with its separate pairing token. Reconnect uses exponential backoff with jitter and resends the current full state after authentication.
+4. The loopback handler validates envelope/payload shape and bounds before passing typed data to `IBrowserIntegrationService`.
+5. The normalizer sanitizes the URL and bounds transient text. The store retains only meaningful changes and clears state on active connection loss.
+6. The existing connection manager broadcasts a `browser_state` projection over the already-authenticated PC-to-Pi WebSocket. That projection converts selected text to a Boolean presence flag.
+7. The frontend renders this enrichment only as useful Browser / Research metadata. Context resolution continues to consume the independent foreground process signal.
+
 ### Command round trip
 
 1. The user presses a known dashboard button.
@@ -300,12 +328,15 @@ The first automated tests should focus on behavior that can run without an inter
 - invalid, missing, fractional, or unexpected seek parameters are rejected before dispatch;
 - validated seek positions reach the media service as a `TimeSpan`, and session-disappearance failures remain safe command results;
 - cancellation stops the monitoring loop and command handlers.
+- valid/malformed bridge envelopes, pairing failures, URL/domain normalization, duplicate suppression, tab changes, selection clearing/truncation, stale connection ownership, and disconnect clearing behave deterministically without Firefox.
 
 The real Win32 foreground adapter, WinRT media adapter, and Core Audio/NAudio adapter need a small amount of focused integration or manual testing on Windows. Most other logic depends on interfaces and plain data types so it can be tested deterministically.
 
 ## Dependency plan
 
 The app and tests target `net10.0-windows10.0.19041.0`. On modern .NET, that Windows-specific target framework makes the SDK supply the Windows SDK reference/projection assets required to consume inbox WinRT APIs such as `Windows.Media.Control`; `Microsoft.Windows.SDK.Contracts`, `Microsoft.Windows.CsWinRT`, and Windows App SDK are not application dependencies. Foreground interop continues to use built-in .NET P/Invoke.
+
+The Firefox bridge adds no .NET or JavaScript dependency. It uses Kestrel/native WebSockets, `System.Text.Json`, built-in cryptography, and standard Mozilla WebExtensions APIs. Firefox 147 is the minimum declared extension version because its current Manifest V3 policy permits the explicit loopback `ws:` CSP source for temporarily loaded extensions. Temporary installation remains a development path; signed distribution may require WSS or further Mozilla policy review.
 
 Core Audio application sessions are classic COM APIs rather than WinRT and are not supplied as convenient .NET SDK projections. The application therefore references only stable `NAudio.Wasapi` 2.3.0 (which brings its small `NAudio.Core` dependency) for endpoint/session enumeration, callbacks, volume, and release logic. The broad `NAudio` metapackage and NAudio 3 preview are not used. NAudio intentionally does not expose a system-default setter because Windows has no public one; the small PolicyConfig vtable needed solely for that operation is maintained in one isolated adapter and documented as an unsupported compatibility risk.
 

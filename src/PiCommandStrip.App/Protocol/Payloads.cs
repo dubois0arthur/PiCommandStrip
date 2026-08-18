@@ -100,6 +100,20 @@ public sealed record ApplicationAudioPayload(
     bool HasMixedVolume,
     bool HasMixedMute);
 
+public sealed record BrowserStatePayload(
+    string ConnectionState,
+    string? BrowserType,
+    string? SourceIdentifier,
+    string? InstanceIdentifier,
+    int? ActiveTabId,
+    string? Url,
+    string? HostName,
+    string? PageTitle,
+    bool HasSelectedText,
+    bool? CanGoBack,
+    bool? CanGoForward,
+    DateTimeOffset LastUpdatedUtc);
+
 public sealed record ContextSelectionResultPayload(
     Guid RequestMessageId,
     bool Succeeded,

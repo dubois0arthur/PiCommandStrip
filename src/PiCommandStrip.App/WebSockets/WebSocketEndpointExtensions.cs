@@ -1,4 +1,5 @@
 using PiCommandStrip.App.AudioMixer;
+using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.Protocol;
@@ -24,6 +25,7 @@ public static class WebSocketEndpointExtensions
         services.AddSingleton<IMediaStateBroadcaster, WebSocketMediaStateBroadcaster>();
         services.AddSingleton<IAudioStateBroadcaster, WebSocketAudioStateBroadcaster>();
         services.AddSingleton<ISpotifyStateBroadcaster, WebSocketSpotifyStateBroadcaster>();
+        services.AddSingleton<IBrowserStateBroadcaster, WebSocketBrowserStateBroadcaster>();
         services.AddTransient<WebSocketConnectionHandler>();
 
         return services;
