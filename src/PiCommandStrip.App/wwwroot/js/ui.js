@@ -1,8 +1,18 @@
+import { AudioMixerController } from "./audio-mixer.js";
 import { NowPlayingController } from "./now-playing.js";
 
 const elements = {
     activityAnnouncer: document.querySelector("#activity-announcer"),
     appShell: document.querySelector("#app-shell"),
+    audioApplicationList: document.querySelector("#audio-application-list"),
+    audioApplicationSummary: document.querySelector("#audio-application-summary"),
+    audioApplicationTemplate: document.querySelector("#audio-application-template"),
+    audioEmptyState: document.querySelector("#audio-empty-state"),
+    audioMasterMute: document.querySelector("#audio-master-mute"),
+    audioMasterPercentage: document.querySelector("#audio-master-percentage"),
+    audioMasterVolume: document.querySelector("#audio-master-volume"),
+    audioOutputDevice: document.querySelector("#audio-output-device"),
+    audioWorkspace: document.querySelector("#audio-workspace"),
     authenticationForm: document.querySelector("#authentication-form"),
     authenticationMessage: document.querySelector("#authentication-message"),
     authenticationPanel: document.querySelector("#authentication-panel"),
@@ -18,6 +28,7 @@ const elements = {
     contextWorkspace: document.querySelector("#context-workspace"),
     currentTime: document.querySelector("#current-time"),
     diagnosticAuthentication: document.querySelector("#diagnostic-authentication"),
+    diagnosticProtocol: document.querySelector("#diagnostic-protocol"),
     diagnosticsBackdrop: document.querySelector("#diagnostics-backdrop"),
     diagnosticsClose: document.querySelector("#diagnostics-close"),
     diagnosticsPanel: document.querySelector("#diagnostics-panel"),
@@ -31,6 +42,8 @@ const elements = {
     latencyValue: document.querySelector("#latency-value"),
     layoutDebug: document.querySelector("#layout-debug"),
     navHome: document.querySelector("#nav-home"),
+    navAudio: document.querySelector("#nav-audio"),
+    navMasterVolume: document.querySelector("#nav-master-volume"),
     navMedia: document.querySelector("#nav-media"),
     navMore: document.querySelector("#nav-more"),
     nowPlayingTemplate: document.querySelector("#now-playing-template"),
@@ -51,6 +64,16 @@ const nowPlaying = new NowPlayingController(
     elements.compactNowPlaying,
     elements.expandedNowPlaying,
     elements.nowPlayingTemplate);
+const audioMixer = new AudioMixerController({
+    applicationList: elements.audioApplicationList,
+    applicationSummary: elements.audioApplicationSummary,
+    emptyState: elements.audioEmptyState,
+    masterMute: elements.audioMasterMute,
+    masterPercentage: elements.audioMasterPercentage,
+    masterSlider: elements.audioMasterVolume,
+    outputDevice: elements.audioOutputDevice,
+    template: elements.audioApplicationTemplate
+});
 
 let connected = false;
 let contextChangedAt;
@@ -90,6 +113,7 @@ function updateControlStates() {
     elements.contextSelection.disabled = !connected || contextSelectionPending;
     elements.navHome.disabled = !connected || contextSelectionPending;
     elements.navMedia.disabled = !connected || contextSelectionPending;
+    elements.navAudio.disabled = !connected || contextSelectionPending;
     elements.pingButton.disabled = !connected || manualPingPending;
 }
 
@@ -297,21 +321,26 @@ function workspaceContent() {
 
 function renderWorkspace() {
     const presentation = mediaPresentation();
+    const audioActive = latestContextState.contextId === "audio";
     elements.appShell.dataset.context = latestContextState.contextId || "default";
     elements.appShell.dataset.mediaPresentation = presentation;
     nowPlaying.setPresentation(presentation);
-    elements.contextWorkspace.hidden = presentation === "expanded";
+    elements.audioWorkspace.hidden = !audioActive || presentation === "expanded";
+    elements.contextWorkspace.hidden = presentation === "expanded" || audioActive;
     workspaceContent();
 }
 
 function updateNavigationState() {
     const automatic = lastContextSelection === "automatic";
     const mediaPinned = lastContextSelection === "media";
+    const audioPinned = lastContextSelection === "audio";
     elements.navHome.dataset.active = automatic ? "true" : "false";
     elements.navMedia.dataset.active = mediaPinned ? "true" : "false";
+    elements.navAudio.dataset.active = audioPinned ? "true" : "false";
     elements.navMore.dataset.active = diagnosticsOpen ? "true" : "false";
     elements.navHome.setAttribute("aria-pressed", automatic ? "true" : "false");
     elements.navMedia.setAttribute("aria-pressed", mediaPinned ? "true" : "false");
+    elements.navAudio.setAttribute("aria-pressed", audioPinned ? "true" : "false");
     elements.navMore.setAttribute("aria-pressed", diagnosticsOpen ? "true" : "false");
 }
 
@@ -352,6 +381,7 @@ export const dashboardUi = {
             callback(elements.contextSelection.value));
         elements.navHome.addEventListener("click", () => callback("automatic"));
         elements.navMedia.addEventListener("click", () => callback("media"));
+        elements.navAudio.addEventListener("click", () => callback("audio"));
     },
 
     bindNavigation() {
@@ -375,6 +405,10 @@ export const dashboardUi = {
 
     bindMediaControls(callback) {
         nowPlaying.bindCommands(callback);
+    },
+
+    bindAudioControls(callback) {
+        audioMixer.bindCommands(callback);
     },
 
     bindPing(callback) {
@@ -446,6 +480,21 @@ export const dashboardUi = {
         renderWorkspace();
     },
 
+    renderAudioState(state) {
+        audioMixer.setAudioState(state);
+        const output = state?.isAvailable === true ? state.outputDevice : null;
+        elements.navMasterVolume.textContent = output
+            ? `${Math.round(Math.min(1, Math.max(0, output.volume)) * 100)}%`
+            : "--%";
+        elements.navAudio.title = output
+            ? `${output.friendlyName}: ${elements.navMasterVolume.textContent}`
+            : "Audio mixer unavailable";
+    },
+
+    setProtocolVersion(version) {
+        elements.diagnosticProtocol.textContent = `WebSocket v${version}`;
+    },
+
     setAvailableContexts(contexts = []) {
         const automaticOption = document.createElement("option");
         automaticOption.value = "automatic";
@@ -492,6 +541,22 @@ export const dashboardUi = {
         elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
     },
 
+    showAudioCommandResult(result) {
+        const pending = audioMixer.handleCommandResult(result);
+        const isVolume = result.commandId === "audio.setMasterVolume" ||
+            result.commandId === "audio.setApplicationVolume";
+
+        if (!result.succeeded) {
+            showFeedback(result.message, "failure", 7000);
+        } else if (!isVolume) {
+            showFeedback(result.message, "success", 1800);
+        }
+
+        if (!isVolume || !result.succeeded || pending?.commandId !== result.commandId) {
+            elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
+        }
+    },
+
     showCommandResult(result) {
         showFeedback(result.message, result.succeeded ? "success" : "failure", result.succeeded ? 2200 : 7000);
         elements.activityAnnouncer.textContent = result.message;
@@ -510,6 +575,7 @@ export const dashboardUi = {
     setConnection(state, text) {
         connected = state === "connected";
         nowPlaying.setConnected(connected);
+        audioMixer.setConnected(connected);
         elements.appShell.dataset.connection = state;
         elements.connectionIndicator.dataset.state = state;
         elements.connectionState.textContent = text.toLowerCase().includes("retrying")
@@ -519,6 +585,7 @@ export const dashboardUi = {
         elements.offlineState.hidden = connected;
         elements.workspaceSurface.inert = !connected;
         elements.compactNowPlaying.inert = !connected;
+        elements.audioWorkspace.inert = !connected;
 
         if (connected) {
             elements.offlineMessage.textContent = "Trying to reconnect. Controls will return automatically.";
@@ -529,6 +596,8 @@ export const dashboardUi = {
             elements.headerContext.textContent = state === "connecting" ? "Waiting" : "Unavailable";
             elements.headerContextMode.textContent = "Offline";
             elements.headerProcess.textContent = "Waiting for PC";
+            elements.navMasterVolume.textContent = "--%";
+            elements.navAudio.title = "Audio mixer unavailable while disconnected";
             elements.offlineMessage.textContent = state === "connecting"
                 ? "Connecting to the Windows host."
                 : "Trying to reconnect. Controls will return automatically.";

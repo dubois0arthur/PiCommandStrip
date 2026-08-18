@@ -94,13 +94,15 @@ The host follows the current session selected by Windows System Media Transport 
 
 Media is the primary workspace in Media context and in Default when no more useful context capability exists. Browser-owned media is also promoted while Browser / Research is active; when another context has higher-value content, the same state renders as a compact persistent strip. Both presentations share the same component logic, provide a deliberate no-art fallback, support capability-aware playback buttons and touch seeking, and advance progress locally between server corrections. Artwork is read only from the Windows media session, kept in a bounded one-entry memory cache, and served by the local host; Spotify Web API and external image requests are not used.
 
-The normal interface is a compact status header, one dynamic workspace, and a small Home/Media/More navigation row. Foreground process is supporting metadata rather than the main panel. PID, context age, manual RTT, and manual context selection live in System Details. Prototype Notepad and latency cards are no longer primary controls; ordinary command outcomes appear as accessible transient feedback instead of permanent result panels.
+The normal interface is a compact status header, one dynamic workspace, and a small Home/Media/Audio/More navigation row. Foreground process is supporting metadata rather than the main panel. PID, context age, manual RTT, and manual context selection live in System Details. Prototype Notepad and latency cards are no longer primary controls; ordinary command outcomes appear as accessible transient feedback instead of permanent result panels.
 
 ## Windows audio mixer state
 
 The host separately monitors the default multimedia output device and its Windows Core Audio render sessions. It publishes master output volume/mute plus grouped application entries containing process metadata, volume, mute, and active/inactive state. Media and audio remain separate: media describes content and playback controls, while audio describes render streams and volume.
 
-Multiple sessions with the same recognizable process name are grouped into one application entry; metadata-poor sessions use Windows grouping/session identity and are never merged by display text alone. Raw Windows session identifiers remain server-side so a later audio-control phase can target every member of a grouped application. Explicit system-sounds and expired sessions are omitted, but incomplete ordinary sessions remain visible. This phase exposes `audio_state` only—there are no frontend sliders, microphone controls, device switching, routing, or audio commands yet.
+Multiple sessions with the same recognizable process name are grouped into one application entry; metadata-poor sessions use Windows grouping/session identity and are never merged by display text alone. Raw Windows session identifiers remain server-side so the Audio page can target every member of a grouped application. Explicit system-sounds and expired sessions are omitted, but incomplete ordinary sessions remain visible.
+
+The Audio destination provides touch-friendly master and application volume/mute controls. Slider changes are coalesced during a drag and always send a final release value; incoming `audio_state` remains authoritative. Application IDs are resolved against the current mixer state before the Windows-specific service changes any underlying sessions. Microphones, output-device switching, peak meters, routing, and equalization remain out of scope.
 
 ## Project layout
 

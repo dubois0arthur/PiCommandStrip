@@ -51,6 +51,65 @@ function applyLayoutFixture(state) {
     return state;
 }
 
+function applyContextFixture(state) {
+    if (layoutFixture !== "audio") {
+        return state;
+    }
+
+    return {
+        ...state,
+        contextId: "audio",
+        displayName: "Audio",
+        selectionMode: "manual",
+        source: "layout_fixture",
+        trigger: "audio",
+        activeSinceUtc: new Date().toISOString()
+    };
+}
+
+function applyAudioFixture(state) {
+    if (layoutFixture !== "audio") {
+        return state;
+    }
+
+    const application = (suffix, displayName, volume, active, extra = {}) => ({
+        applicationId: suffix.repeat(64).slice(0, 64),
+        processIds: [4000 + suffix.charCodeAt(0)],
+        processName: displayName.toLowerCase(),
+        displayName,
+        volume,
+        isMuted: false,
+        state: active ? "active" : "inactive",
+        sessionCount: 1,
+        hasMixedVolume: false,
+        hasMixedMute: false,
+        ...extra
+    });
+
+    return {
+        isAvailable: true,
+        outputDevice: {
+            deviceId: "layout-fixture-output",
+            friendlyName: "Speakers (USB Audio Device)",
+            volume: 0.72,
+            isMuted: false
+        },
+        applications: [
+            application("a", "Cyberpunk 2077", 0.78, true),
+            application("b", "Discord", 0.61, true, { sessionCount: 2 }),
+            application("c", "Spotify", 0.44, true),
+            application("d", "Firefox — YouTube and research tabs", 0.35, false, {
+                sessionCount: 3,
+                hasMixedVolume: true
+            }),
+            application("e", "System notification host", 0.2, false),
+            application("f", "A deliberately long application name that must truncate", 0.5, false)
+        ],
+        revision: (state?.revision || 0) + 1,
+        lastUpdatedUtc: new Date().toISOString()
+    };
+}
+
 function readStoredToken() {
     try {
         return sessionStorage.getItem(tokenStorageKey);
@@ -109,11 +168,15 @@ const dashboardSocket = new DashboardSocket({
     },
 
     onContextState(state) {
-        dashboardUi.renderContextState(state);
+        dashboardUi.renderContextState(applyContextFixture(state));
     },
 
     onMediaState(state) {
         dashboardUi.renderMediaState(applyLayoutFixture(state));
+    },
+
+    onAudioState(state) {
+        dashboardUi.renderAudioState(applyAudioFixture(state));
     },
 
     onContextSelectionResult(result) {
@@ -133,11 +196,14 @@ const dashboardSocket = new DashboardSocket({
             dashboardUi.showCommandResult(result);
         } else if (result.commandId.startsWith("media.")) {
             dashboardUi.showMediaCommandResult(result);
+        } else if (result.commandId.startsWith("audio.")) {
+            dashboardUi.showAudioCommandResult(result);
         }
     },
 
     onServerHello(server) {
         dashboardUi.setAvailableContexts(server.availableContexts);
+        dashboardUi.setProtocolVersion(server.protocolVersion);
     },
 
     onServerError(error) {
@@ -167,6 +233,10 @@ dashboardUi.bindMediaControls((commandId, positionMilliseconds) => {
         dashboardUi.setMediaCommandPending(commandId);
     }
 });
+
+dashboardUi.bindAudioControls(request => dashboardSocket.sendAudioCommand(
+    request.commandId,
+    request));
 
 dashboardUi.bindAuthentication(token => {
     if (!token) {

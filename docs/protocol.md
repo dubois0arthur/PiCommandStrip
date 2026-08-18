@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 7 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 8 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, automatic/manual context selection, structured errors, and fixed allowlisted Notepad/media commands. Version 7 adds `audio_state`; it adds no audio-control request and retains version 6 media artwork behavior unchanged.
+This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, automatic/manual context selection, structured errors, and fixed allowlisted Notepad, media, and audio commands. Version 8 adds typed audio volume/mute controls while retaining version 7 `audio_state` and version 6 media artwork behavior.
 
 ## Transport
 
@@ -52,17 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "7",
+    "protocolVersion": "8",
     "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `7`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `8`.
 - `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
 
-The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 7 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 8 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -112,7 +112,7 @@ Manual mode has exactly `mode` and `contextId`:
 
 ### `command_request`
 
-Carries a fixed allowlisted command identifier. It never contains a shell command, executable path, script, argument list, or executable object. All commands except `media.seek` have exactly one payload property named `commandId`; additional properties are rejected.
+Carries a fixed allowlisted command identifier. It never contains a shell command, executable path, script, argument list, or executable object. Each command has an exact payload shape; additional properties are rejected.
 
 ```json
 {
@@ -134,8 +134,12 @@ The allowlisted identifiers are:
 - `media.previous`
 - `media.next`
 - `media.seek`
+- `audio.setMasterVolume`
+- `audio.setMasterMute`
+- `audio.setApplicationVolume`
+- `audio.setApplicationMute`
 
-`media.seek` is the only parameterized command and has exactly this shape:
+`media.seek` has exactly this shape:
 
 ```json
 {
@@ -149,7 +153,24 @@ The allowlisted identifiers are:
 }
 ```
 
-`positionMilliseconds` must be a non-negative JSON integer. The server validates it again against the live media session's seek capability, duration, and seek range before converting the relative position to Windows timeline ticks. Unknown identifiers execute nothing and receive a failed `command_result`. A connection may attempt one command every configured cooldown period (750 milliseconds by default); faster attempts receive a rate-limit result.
+`positionMilliseconds` must be a non-negative JSON integer. The server validates it again against the live media session's seek capability, duration, and seek range before converting the relative position to Windows timeline ticks. Unknown identifiers execute nothing and receive a failed `command_result`.
+
+Audio volume commands carry a finite normalized `volume` from `0.0` through `1.0`. Mute commands carry a Boolean `isMuted`. Application commands additionally carry the opaque 64-character hexadecimal `applicationId` from the latest `audio_state`:
+
+```json
+{
+  "type": "command_request",
+  "messageId": "c227745c-5d58-4859-92fb-b5586c685b13",
+  "timestampUtc": "2026-08-18T12:00:02.000Z",
+  "payload": {
+    "commandId": "audio.setApplicationVolume",
+    "applicationId": "9b88c63f4dd15f40d263d0ff745d5fc906422256178790824662f4a45e0cc880",
+    "volume": 0.42
+  }
+}
+```
+
+The server resolves application IDs only against the current normalized mixer state, then applies the change to every still-live underlying Windows session in that group. A stale or disappeared ID returns a failed `command_result`. Master commands target only the current default multimedia render endpoint. Ordinary commands retain the configured 750-millisecond per-connection cooldown; coalesced audio volume updates use a separate 40-millisecond server gate so a final touch release is not blocked by the previous drag sample.
 
 ## Server-to-client messages
 
@@ -164,7 +185,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "7",
+    "protocolVersion": "8",
     "maximumMessageSizeBytes": 16384,
     "availableContexts": [
       { "contextId": "default", "displayName": "Default" },
@@ -338,13 +359,13 @@ Reports the normalized state of the default multimedia render endpoint and its u
 }
 ```
 
-`volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 7.
+`volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 8.
 
 `applicationId` is a server-generated SHA-256 identifier for the grouping key. It is stable while the grouping evidence is stable and never exposes a process path or raw Windows session identifier. `sessionCount` shows how many underlying Windows controls contribute to the entry. `hasMixedVolume` and `hasMixedMute` indicate that those controls disagree. The reported grouped volume is the maximum member scalar, and grouped `isMuted` is true only when every member is muted.
 
 When no default output is available, `isAvailable` is `false`, `outputDevice` is `null`, and `applications` is empty. `revision` starts at zero and increases monotonically for this host process whenever the normalized meaning changes. `lastUpdatedUtc` records that meaningful observation; timestamp-only samples do not produce a message.
 
-Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 7 provides no audio command or writable field.
+Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 8 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative.
 
 ### `context_selection_result`
 
@@ -420,7 +441,7 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` with protocol version 7, its fresh UTC timestamp, and the configured token.
+4. The dashboard sends `client_hello` with protocol version 8, its fresh UTC timestamp, and the configured token.
 5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
 6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, and `audio_state` snapshots in that order.
 7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, and audio changes are broadcast independently.

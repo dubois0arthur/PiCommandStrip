@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.PcCommands;
 
@@ -158,6 +159,78 @@ public sealed class ClientMessageParser
                 new CommandRequestPayload(commandId, positionMilliseconds)));
         }
 
+        if (commandId == PcCommandIds.AudioSetMasterVolume)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "volume") ||
+                !TryGetRequiredVolume(payload, "volume", out var volume))
+            {
+                return InvalidAudioPayload(
+                    messageId,
+                    $"'{commandId}' requires only 'commandId' and a numeric 'volume' from 0 through 1.");
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, Volume: volume)));
+        }
+
+        if (commandId == PcCommandIds.AudioSetMasterMute)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "isMuted") ||
+                !TryGetRequiredBoolean(payload, "isMuted", out var isMuted))
+            {
+                return InvalidAudioPayload(
+                    messageId,
+                    $"'{commandId}' requires only 'commandId' and a Boolean 'isMuted'.");
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, IsMuted: isMuted)));
+        }
+
+        if (commandId == PcCommandIds.AudioSetApplicationVolume)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "applicationId", "volume") ||
+                !TryGetApplicationId(payload, out var applicationId) ||
+                !TryGetRequiredVolume(payload, "volume", out var volume))
+            {
+                return InvalidAudioPayload(
+                    messageId,
+                    $"'{commandId}' requires only a valid 'applicationId' and a numeric 'volume' from 0 through 1.");
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(
+                    commandId,
+                    ApplicationId: applicationId,
+                    Volume: volume)));
+        }
+
+        if (commandId == PcCommandIds.AudioSetApplicationMute)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "applicationId", "isMuted") ||
+                !TryGetApplicationId(payload, out var applicationId) ||
+                !TryGetRequiredBoolean(payload, "isMuted", out var isMuted))
+            {
+                return InvalidAudioPayload(
+                    messageId,
+                    $"'{commandId}' requires only a valid 'applicationId' and a Boolean 'isMuted'.");
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(
+                    commandId,
+                    ApplicationId: applicationId,
+                    IsMuted: isMuted)));
+        }
+
         if (!HasExactlyOneProperty(payload, "commandId"))
         {
             return ProtocolParseResult.Failure(
@@ -237,27 +310,40 @@ public sealed class ClientMessageParser
 
     private static bool HasExactlyProperties(
         JsonElement parent,
-        string firstExpectedName,
-        string secondExpectedName)
+        params string[] expectedNames)
     {
-        var foundFirst = false;
-        var foundSecond = false;
-        var propertyCount = 0;
+        if (expectedNames.Length == 0)
+        {
+            return !parent.EnumerateObject().Any();
+        }
+
+        var found = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var property in parent.EnumerateObject())
         {
-            propertyCount++;
-            foundFirst |= property.NameEquals(firstExpectedName);
-            foundSecond |= property.NameEquals(secondExpectedName);
-
-            if (!property.NameEquals(firstExpectedName) &&
-                !property.NameEquals(secondExpectedName))
+            if (!expectedNames.Contains(property.Name, StringComparer.Ordinal) ||
+                !found.Add(property.Name))
             {
                 return false;
             }
         }
 
-        return propertyCount == 2 && foundFirst && foundSecond;
+        return found.Count == expectedNames.Length;
+    }
+
+    private static ProtocolParseResult InvalidAudioPayload(Guid messageId, string message) =>
+        ProtocolParseResult.Failure("invalid_payload", message, messageId);
+
+    private static bool TryGetApplicationId(JsonElement payload, out string applicationId)
+    {
+        if (!TryGetRequiredString(payload, "applicationId", out applicationId) ||
+            !AudioMixerTargetResolver.IsValidApplicationId(applicationId))
+        {
+            applicationId = string.Empty;
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryGetRequiredString(JsonElement parent, string name, out string value)
@@ -296,6 +382,37 @@ public sealed class ClientMessageParser
         return parent.TryGetProperty(name, out var property) &&
             property.ValueKind is JsonValueKind.Number &&
             property.TryGetInt64(out value);
+    }
+
+    private static bool TryGetRequiredVolume(
+        JsonElement parent,
+        string name,
+        out float value)
+    {
+        value = default;
+
+        return parent.TryGetProperty(name, out var property) &&
+            property.ValueKind is JsonValueKind.Number &&
+            property.TryGetSingle(out value) &&
+            float.IsFinite(value) &&
+            value is >= 0 and <= 1;
+    }
+
+    private static bool TryGetRequiredBoolean(
+        JsonElement parent,
+        string name,
+        out bool value)
+    {
+        value = default;
+
+        if (!parent.TryGetProperty(name, out var property) ||
+            property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            return false;
+        }
+
+        value = property.GetBoolean();
+        return true;
     }
 
     private static bool TryGetRequiredUtcTimestamp(

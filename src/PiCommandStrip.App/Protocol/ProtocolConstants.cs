@@ -2,6 +2,6 @@ namespace PiCommandStrip.App.Protocol;
 
 public static class ProtocolConstants
 {
-    public const string Version = "7";
+    public const string Version = "8";
     public const int MaximumMessageSizeBytes = 16 * 1024;
 }

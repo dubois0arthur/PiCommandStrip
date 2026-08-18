@@ -288,6 +288,36 @@ public sealed class WebSocketAuthenticationTests
     private sealed class StubAudioMixerService(TimeProvider timeProvider) : IAudioMixerService
     {
         public AudioState Current { get; } = AudioState.Unavailable(timeProvider.GetUtcNow());
+
+        public Task<AudioMixerCommandResult> SetMasterVolumeAsync(
+            float volume,
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<AudioMixerCommandResult> SetMasterMuteAsync(
+            bool isMuted,
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<AudioMixerCommandResult> SetApplicationVolumeAsync(
+            string applicationId,
+            float volume,
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<AudioMixerCommandResult> SetApplicationMuteAsync(
+            string applicationId,
+            bool isMuted,
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        private static Task<AudioMixerCommandResult> NotAvailable(
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(AudioMixerCommandResult.Failure(
+                "Windows audio is currently unavailable."));
+        }
     }
 
     private sealed class RecordingCommandDispatcher : IPcCommandDispatcher

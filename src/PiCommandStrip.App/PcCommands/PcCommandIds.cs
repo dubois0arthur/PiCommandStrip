@@ -9,4 +9,8 @@ public static class PcCommandIds
     public const string MediaPrevious = "media.previous";
     public const string MediaNext = "media.next";
     public const string MediaSeek = "media.seek";
+    public const string AudioSetMasterVolume = "audio.setMasterVolume";
+    public const string AudioSetMasterMute = "audio.setMasterMute";
+    public const string AudioSetApplicationVolume = "audio.setApplicationVolume";
+    public const string AudioSetApplicationMute = "audio.setApplicationMute";
 }

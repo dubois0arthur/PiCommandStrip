@@ -83,6 +83,53 @@
                         hidden>
                     </section>
 
+                    <section id="audio-workspace" class="audio-workspace" aria-labelledby="audio-workspace-title" hidden>
+                        <header class="audio-master-panel">
+                            <div class="audio-master-copy">
+                                <p class="eyebrow">Master output</p>
+                                <h2 id="audio-workspace-title">System audio</h2>
+                                <p id="audio-output-device" class="audio-output-device">Waiting for output device</p>
+                            </div>
+                            <div class="audio-master-controls">
+                                <label class="audio-slider-field audio-slider-field-master">
+                                    <span class="visually-hidden">Master volume</span>
+                                    <input
+                                        id="audio-master-volume"
+                                        class="audio-volume-slider"
+                                        type="range"
+                                        min="0"
+                                        max="100"
+                                        value="0"
+                                        step="1"
+                                        aria-label="Master output volume"
+                                        disabled>
+                                </label>
+                                <output id="audio-master-percentage" class="audio-volume-percentage" for="audio-master-volume">--%</output>
+                                <button
+                                    id="audio-master-mute"
+                                    class="audio-mute-button"
+                                    type="button"
+                                    aria-pressed="false"
+                                    disabled>
+                                    <span class="audio-mute-icon" aria-hidden="true">&#128266;</span>
+                                    <span class="audio-mute-label">Mute</span>
+                                </button>
+                            </div>
+                        </header>
+
+                        <section class="application-mixer" aria-labelledby="application-mixer-title">
+                            <header class="application-mixer-heading">
+                                <div>
+                                    <p class="eyebrow">Application mixer</p>
+                                    <h3 id="application-mixer-title">Current audio sessions</h3>
+                                </div>
+                                <span id="audio-application-summary" class="audio-application-summary">0 available</span>
+                            </header>
+                            <div id="audio-application-list" class="audio-application-list" tabindex="0"></div>
+                            <p id="audio-empty-state" class="audio-empty-state">No application audio sessions are currently available.</p>
+                        </section>
+                    </section>
+
                     <section id="context-workspace" class="context-workspace" aria-labelledby="workspace-title">
                         <div class="workspace-copy">
                             <p id="workspace-eyebrow" class="eyebrow">Automatic workspace</p>
@@ -136,6 +183,11 @@
                 <span class="nav-icon" aria-hidden="true">&#9835;</span>
                 <span>Media</span>
             </button>
+            <button id="nav-audio" class="nav-destination nav-audio" type="button" data-destination="audio">
+                <span class="nav-icon" aria-hidden="true">&#128266;</span>
+                <span>Audio</span>
+                <span id="nav-master-volume" class="nav-audio-volume">--%</span>
+            </button>
             <button
                 id="nav-more"
                 class="nav-destination"
@@ -181,7 +233,7 @@
             </div>
             <div>
                 <dt>Protocol</dt>
-                <dd>WebSocket v6</dd>
+                <dd id="diagnostic-protocol">WebSocket</dd>
             </div>
         </dl>
 
@@ -246,6 +298,38 @@
                     </button>
                 </div>
             </div>
+        </article>
+    </template>
+
+    <template id="audio-application-template">
+        <article class="audio-application-row">
+            <span class="audio-activity-indicator" aria-hidden="true"></span>
+            <div class="audio-application-identity">
+                <strong data-audio-role="name">Application</strong>
+                <span data-audio-role="status">Inactive</span>
+            </div>
+            <label class="audio-slider-field">
+                <span class="visually-hidden" data-audio-role="slider-label">Application volume</span>
+                <input
+                    class="audio-volume-slider"
+                    data-audio-role="volume"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value="0"
+                    step="1"
+                    disabled>
+            </label>
+            <output class="audio-volume-percentage" data-audio-role="percentage">--%</output>
+            <button
+                class="audio-mute-button audio-application-mute"
+                data-audio-role="mute"
+                type="button"
+                aria-pressed="false"
+                disabled>
+                <span class="audio-mute-icon" aria-hidden="true">&#128266;</span>
+                <span class="audio-mute-label">Mute</span>
+            </button>
         </article>
     </template>
 

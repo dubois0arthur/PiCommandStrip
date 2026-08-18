@@ -1,6 +1,6 @@
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
-const protocolVersion = "7";
+const protocolVersion = "8";
 const mediaCommandIds = new Set([
     "media.play",
     "media.pause",
@@ -8,6 +8,12 @@ const mediaCommandIds = new Set([
     "media.previous",
     "media.next",
     "media.seek"
+]);
+const audioCommandIds = new Set([
+    "audio.setMasterVolume",
+    "audio.setMasterMute",
+    "audio.setApplicationVolume",
+    "audio.setApplicationMute"
 ]);
 
 function createMessageId() {
@@ -126,6 +132,42 @@ export class DashboardSocket {
             payload.positionMilliseconds = Math.round(positionMilliseconds);
         } else if (positionMilliseconds !== undefined) {
             return null;
+        }
+
+        const messageId = createMessageId();
+        this.#send("command_request", messageId, payload);
+        return messageId;
+    }
+
+    sendAudioCommand(commandId, { applicationId, volume, isMuted } = {}) {
+        if (!this.isConnected || !audioCommandIds.has(commandId)) {
+            return null;
+        }
+
+        const payload = { commandId };
+        const isApplicationCommand = commandId === "audio.setApplicationVolume" ||
+            commandId === "audio.setApplicationMute";
+        const isVolumeCommand = commandId === "audio.setMasterVolume" ||
+            commandId === "audio.setApplicationVolume";
+
+        if (isApplicationCommand) {
+            if (typeof applicationId !== "string" ||
+                !/^[0-9a-f]{64}$/i.test(applicationId)) {
+                return null;
+            }
+            payload.applicationId = applicationId;
+        }
+
+        if (isVolumeCommand) {
+            if (!Number.isFinite(volume) || volume < 0 || volume > 1) {
+                return null;
+            }
+            payload.volume = Math.round(volume * 1000) / 1000;
+        } else {
+            if (typeof isMuted !== "boolean") {
+                return null;
+            }
+            payload.isMuted = isMuted;
         }
 
         const messageId = createMessageId();

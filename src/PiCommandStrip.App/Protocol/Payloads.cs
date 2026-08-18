@@ -93,7 +93,10 @@ public sealed record ClientHelloPayload(
 
 public sealed record CommandRequestPayload(
     string CommandId,
-    long? PositionMilliseconds = null);
+    long? PositionMilliseconds = null,
+    string? ApplicationId = null,
+    float? Volume = null,
+    bool? IsMuted = null);
 
 public sealed record ContextSelectionRequestPayload(string Mode, string? ContextId);
 

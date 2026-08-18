@@ -14,6 +14,8 @@ public sealed class WebSocketClientConnection(
     TimeProvider timeProvider,
     TimeSpan? commandCooldown = null)
 {
+    private static readonly TimeSpan AudioVolumeCommandCooldownDuration =
+        TimeSpan.FromMilliseconds(40);
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private ForegroundWindowState? _lastSentPcState;
     private ContextState? _lastSentContextState;
@@ -28,6 +30,9 @@ public sealed class WebSocketClientConnection(
 
     public PcCommandCooldown CommandCooldown { get; } =
         new(timeProvider, commandCooldown ?? PcCommandCooldown.DefaultDuration);
+
+    public PcCommandCooldown AudioVolumeCommandCooldown { get; } =
+        new(timeProvider, AudioVolumeCommandCooldownDuration);
 
     public bool IsReadyForBroadcasts => Volatile.Read(ref _isReadyForBroadcasts) == 1;
 

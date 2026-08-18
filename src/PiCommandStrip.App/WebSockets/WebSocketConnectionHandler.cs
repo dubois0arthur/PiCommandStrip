@@ -267,7 +267,11 @@ public sealed class WebSocketConnectionHandler(
     {
         PcCommandExecutionResult result;
 
-        if (!connection.CommandCooldown.TryAcquire(out _))
+        var cooldown = AudioCommandHandler.IsVolumeCommand(commandRequest.Payload.CommandId)
+            ? connection.AudioVolumeCommandCooldown
+            : connection.CommandCooldown;
+
+        if (!cooldown.TryAcquire(out _))
         {
             logger.LogInformation(
                 "PC command request rate limited for connection {ConnectionId}",
@@ -279,7 +283,10 @@ public sealed class WebSocketConnectionHandler(
             result = await commandDispatcher.DispatchAsync(
                 new PcCommandInvocation(
                     commandRequest.Payload.CommandId,
-                    commandRequest.Payload.PositionMilliseconds),
+                    commandRequest.Payload.PositionMilliseconds,
+                    commandRequest.Payload.ApplicationId,
+                    commandRequest.Payload.Volume,
+                    commandRequest.Payload.IsMuted),
                 cancellationToken);
         }
 

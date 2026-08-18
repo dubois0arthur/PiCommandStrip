@@ -1,3 +1,4 @@
+using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.MediaSessions;
 
 namespace PiCommandStrip.App.PcCommands;
@@ -32,6 +33,22 @@ public static class PcCommandServiceExtensions
             new MediaCommandHandler(
                 PcCommandIds.MediaSeek,
                 services.GetRequiredService<IMediaSessionService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new AudioCommandHandler(
+                PcCommandIds.AudioSetMasterVolume,
+                services.GetRequiredService<IAudioMixerService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new AudioCommandHandler(
+                PcCommandIds.AudioSetMasterMute,
+                services.GetRequiredService<IAudioMixerService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new AudioCommandHandler(
+                PcCommandIds.AudioSetApplicationVolume,
+                services.GetRequiredService<IAudioMixerService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new AudioCommandHandler(
+                PcCommandIds.AudioSetApplicationMute,
+                services.GetRequiredService<IAudioMixerService>()));
         services.AddSingleton<IPcCommandDispatcher, PcCommandDispatcher>();
 
         return services;

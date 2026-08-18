@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading.Channels;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 
@@ -13,17 +14,66 @@ public sealed class WindowsAudioMixerService(
 {
     private static readonly TimeSpan FallbackPollingInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan FullSessionRescanInterval = TimeSpan.FromSeconds(15);
+    private const string AudioUnavailableMessage = "Windows audio is currently unavailable.";
+    private const string ApplicationUnavailableMessage =
+        "That audio application is no longer available.";
 
     private readonly Dictionary<string, SessionHandle> _sessions = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _refreshSignal = new(0, 1);
+    private readonly Channel<AudioControlRequest> _controlRequests =
+        Channel.CreateBounded<AudioControlRequest>(new BoundedChannelOptions(64)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
     private MMDeviceEnumerator? _deviceEnumerator;
     private MMDevice? _outputDevice;
     private AudioEndpointVolume? _endpointVolume;
     private AudioSessionManager? _sessionManager;
     private int _pendingRefreshFlags = (int)RefreshFlags.All;
+    private int _acceptsCommands;
     private DateTimeOffset _nextFullSessionRescanUtc = DateTimeOffset.MinValue;
 
     public AudioState Current => stateStore.Current;
+
+    public Task<AudioMixerCommandResult> SetMasterVolumeAsync(
+        float volume,
+        CancellationToken cancellationToken) =>
+        QueueControlAsync(
+            new AudioControlOperation(AudioControlKind.MasterVolume, null, volume, null),
+            cancellationToken);
+
+    public Task<AudioMixerCommandResult> SetMasterMuteAsync(
+        bool isMuted,
+        CancellationToken cancellationToken) =>
+        QueueControlAsync(
+            new AudioControlOperation(AudioControlKind.MasterMute, null, null, isMuted),
+            cancellationToken);
+
+    public Task<AudioMixerCommandResult> SetApplicationVolumeAsync(
+        string applicationId,
+        float volume,
+        CancellationToken cancellationToken) =>
+        QueueControlAsync(
+            new AudioControlOperation(
+                AudioControlKind.ApplicationVolume,
+                applicationId,
+                volume,
+                null),
+            cancellationToken);
+
+    public Task<AudioMixerCommandResult> SetApplicationMuteAsync(
+        string applicationId,
+        bool isMuted,
+        CancellationToken cancellationToken) =>
+        QueueControlAsync(
+            new AudioControlOperation(
+                AudioControlKind.ApplicationMute,
+                applicationId,
+                null,
+                isMuted),
+            cancellationToken);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -35,6 +85,7 @@ public sealed class WindowsAudioMixerService(
 
         // ASP.NET's worker threads use the MTA required by Core Audio callbacks.
         await Task.Yield();
+        Volatile.Write(ref _acceptsCommands, 1);
 
         try
         {
@@ -64,6 +115,12 @@ public sealed class WindowsAudioMixerService(
                 {
                     var snapshot = Observe(flags);
                     var normalized = normalizer.Normalize(snapshot, now);
+                    if (ProcessPendingControlRequests(normalized))
+                    {
+                        snapshot = Observe(RefreshFlags.State);
+                        normalized = normalizer.Normalize(snapshot, timeProvider.GetUtcNow());
+                    }
+
                     if (stateStore.TryUpdate(normalized, out var changedState))
                     {
                         await broadcaster.BroadcastAsync(changedState, stoppingToken);
@@ -78,13 +135,176 @@ public sealed class WindowsAudioMixerService(
                     logger.LogWarning(
                         exception,
                         "Windows audio mixer observation failed; monitoring will retry");
+                    FailPendingControlRequests();
                     await PublishUnavailableIfChangedAsync(now, stoppingToken);
                 }
             }
         }
         finally
         {
+            Volatile.Write(ref _acceptsCommands, 0);
+            FailPendingControlRequests();
             DisposeCoreAudioResources();
+        }
+    }
+
+    private async Task<AudioMixerCommandResult> QueueControlAsync(
+        AudioControlOperation operation,
+        CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _acceptsCommands) == 0)
+        {
+            return AudioMixerCommandResult.Failure(AudioUnavailableMessage);
+        }
+
+        var request = new AudioControlRequest(operation, cancellationToken);
+        if (!_controlRequests.Writer.TryWrite(request))
+        {
+            return AudioMixerCommandResult.Failure(AudioUnavailableMessage);
+        }
+
+        RequestRefresh(RefreshFlags.State);
+        return await request.Completion.Task.WaitAsync(cancellationToken);
+    }
+
+    private bool ProcessPendingControlRequests(AudioState observedState)
+    {
+        var processedAny = false;
+
+        while (_controlRequests.Reader.TryRead(out var request))
+        {
+            processedAny = true;
+
+            if (request.CancellationToken.IsCancellationRequested)
+            {
+                request.Completion.TrySetCanceled(request.CancellationToken);
+                continue;
+            }
+
+            try
+            {
+                request.Completion.TrySetResult(ExecuteControlRequest(
+                    request.Operation,
+                    observedState));
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Windows rejected an allowlisted audio mixer operation");
+                request.Completion.TrySetResult(
+                    AudioMixerCommandResult.Failure("The audio change could not be completed."));
+            }
+        }
+
+        return processedAny;
+    }
+
+    private AudioMixerCommandResult ExecuteControlRequest(
+        AudioControlOperation operation,
+        AudioState observedState)
+    {
+        if (_endpointVolume is null || !observedState.IsAvailable)
+        {
+            return AudioMixerCommandResult.Failure(AudioUnavailableMessage);
+        }
+
+        return operation.Kind switch
+        {
+            AudioControlKind.MasterVolume when operation.Volume is { } volume =>
+                SetMasterVolume(volume),
+            AudioControlKind.MasterMute when operation.IsMuted is { } isMuted =>
+                SetMasterMute(isMuted),
+            AudioControlKind.ApplicationVolume when
+                operation.ApplicationId is { } applicationId &&
+                operation.Volume is { } volume =>
+                    SetApplicationControl(
+                        observedState,
+                        applicationId,
+                        handle => handle.SetVolume(volume),
+                        "Application volume updated."),
+            AudioControlKind.ApplicationMute when
+                operation.ApplicationId is { } applicationId &&
+                operation.IsMuted is { } isMuted =>
+                    SetApplicationControl(
+                        observedState,
+                        applicationId,
+                        handle => handle.SetMute(isMuted),
+                        isMuted ? "Application muted." : "Application unmuted."),
+            _ => AudioMixerCommandResult.Failure("The audio change is invalid.")
+        };
+    }
+
+    private AudioMixerCommandResult SetMasterVolume(float volume)
+    {
+        if (!float.IsFinite(volume) || volume is < 0 or > 1 || _endpointVolume is null)
+        {
+            return AudioMixerCommandResult.Failure("The requested volume is invalid.");
+        }
+
+        _endpointVolume.MasterVolumeLevelScalar = volume;
+        return AudioMixerCommandResult.Success("Master volume updated.");
+    }
+
+    private AudioMixerCommandResult SetMasterMute(bool isMuted)
+    {
+        if (_endpointVolume is null)
+        {
+            return AudioMixerCommandResult.Failure(AudioUnavailableMessage);
+        }
+
+        _endpointVolume.Mute = isMuted;
+        return AudioMixerCommandResult.Success(isMuted
+            ? "Master output muted."
+            : "Master output unmuted.");
+    }
+
+    private AudioMixerCommandResult SetApplicationControl(
+        AudioState observedState,
+        string applicationId,
+        Action<SessionHandle> apply,
+        string successMessage)
+    {
+        var application = AudioMixerTargetResolver.ResolveApplication(
+            observedState,
+            applicationId);
+        if (application is null)
+        {
+            return AudioMixerCommandResult.Failure(ApplicationUnavailableMessage);
+        }
+
+        var updatedSessionCount = 0;
+        foreach (var sessionInstanceId in application.SessionInstanceIds)
+        {
+            if (!_sessions.TryGetValue(sessionInstanceId, out var session))
+            {
+                continue;
+            }
+
+            try
+            {
+                apply(session);
+                updatedSessionCount++;
+            }
+            catch (Exception exception)
+            {
+                logger.LogDebug(
+                    exception,
+                    "An audio session disappeared while applying a mixer operation");
+            }
+        }
+
+        return updatedSessionCount > 0
+            ? AudioMixerCommandResult.Success(successMessage)
+            : AudioMixerCommandResult.Failure(ApplicationUnavailableMessage);
+    }
+
+    private void FailPendingControlRequests()
+    {
+        while (_controlRequests.Reader.TryRead(out var request))
+        {
+            request.Completion.TrySetResult(
+                AudioMixerCommandResult.Failure(AudioUnavailableMessage));
         }
     }
 
@@ -385,6 +605,32 @@ public sealed class WindowsAudioMixerService(
         All = Device | Sessions | State
     }
 
+    private enum AudioControlKind
+    {
+        MasterVolume,
+        MasterMute,
+        ApplicationVolume,
+        ApplicationMute
+    }
+
+    private sealed record AudioControlOperation(
+        AudioControlKind Kind,
+        string? ApplicationId,
+        float? Volume,
+        bool? IsMuted);
+
+    private sealed class AudioControlRequest(
+        AudioControlOperation operation,
+        CancellationToken cancellationToken)
+    {
+        public AudioControlOperation Operation { get; } = operation;
+
+        public CancellationToken CancellationToken { get; } = cancellationToken;
+
+        public TaskCompletionSource<AudioMixerCommandResult> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private sealed class SessionHandle : IDisposable
     {
         private readonly AudioSessionControl _control;
@@ -433,6 +679,12 @@ public sealed class WindowsAudioMixerService(
                 MapSessionState(TryRead(() => _control.State)),
                 TryRead(() => _control.IsSystemSoundsSession));
         }
+
+        public void SetVolume(float volume) =>
+            _control.SimpleAudioVolume.Volume = volume;
+
+        public void SetMute(bool isMuted) =>
+            _control.SimpleAudioVolume.Mute = isMuted;
 
         public void Dispose()
         {
