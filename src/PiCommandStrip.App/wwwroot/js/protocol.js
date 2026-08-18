@@ -1,6 +1,6 @@
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
-const protocolVersion = "8";
+const protocolVersion = "10";
 const mediaCommandIds = new Set([
     "media.play",
     "media.pause",
@@ -13,7 +13,13 @@ const audioCommandIds = new Set([
     "audio.setMasterVolume",
     "audio.setMasterMute",
     "audio.setApplicationVolume",
-    "audio.setApplicationMute"
+    "audio.setApplicationMute",
+    "audio.setOutputDevice"
+]);
+const spotifyCommandIds = new Set([
+    "spotify.setSaved",
+    "spotify.setShuffle",
+    "spotify.setRepeat"
 ]);
 
 function createMessageId() {
@@ -139,7 +145,7 @@ export class DashboardSocket {
         return messageId;
     }
 
-    sendAudioCommand(commandId, { applicationId, volume, isMuted } = {}) {
+    sendAudioCommand(commandId, { applicationId, volume, isMuted, deviceId } = {}) {
         if (!this.isConnected || !audioCommandIds.has(commandId)) {
             return null;
         }
@@ -149,6 +155,16 @@ export class DashboardSocket {
             commandId === "audio.setApplicationMute";
         const isVolumeCommand = commandId === "audio.setMasterVolume" ||
             commandId === "audio.setApplicationVolume";
+        const isOutputDeviceCommand = commandId === "audio.setOutputDevice";
+
+        if (isOutputDeviceCommand) {
+            if (typeof deviceId !== "string" ||
+                deviceId.trim().length === 0 ||
+                deviceId.length > 512) {
+                return null;
+            }
+            payload.deviceId = deviceId;
+        }
 
         if (isApplicationCommand) {
             if (typeof applicationId !== "string" ||
@@ -163,11 +179,33 @@ export class DashboardSocket {
                 return null;
             }
             payload.volume = Math.round(volume * 1000) / 1000;
-        } else {
+        } else if (!isOutputDeviceCommand) {
             if (typeof isMuted !== "boolean") {
                 return null;
             }
             payload.isMuted = isMuted;
+        }
+
+        const messageId = createMessageId();
+        this.#send("command_request", messageId, payload);
+        return messageId;
+    }
+
+    sendSpotifyCommand(commandId, { isSaved, shuffleEnabled, repeatState } = {}) {
+        if (!this.isConnected || !spotifyCommandIds.has(commandId)) {
+            return null;
+        }
+
+        const payload = { commandId };
+        if (commandId === "spotify.setSaved") {
+            if (typeof isSaved !== "boolean") return null;
+            payload.isSaved = isSaved;
+        } else if (commandId === "spotify.setShuffle") {
+            if (typeof shuffleEnabled !== "boolean") return null;
+            payload.shuffleEnabled = shuffleEnabled;
+        } else {
+            if (!["off", "context", "track"].includes(repeatState)) return null;
+            payload.repeatState = repeatState;
         }
 
         const messageId = createMessageId();
@@ -284,6 +322,9 @@ export class DashboardSocket {
                     break;
                 case "audio_state":
                     this.#callbacks.onAudioState?.(message.payload);
+                    break;
+                case "spotify_state":
+                    this.#callbacks.onSpotifyState?.(message.payload);
                     break;
                 case "context_selection_result":
                     this.#callbacks.onContextSelectionResult?.(message.payload);

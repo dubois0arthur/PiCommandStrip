@@ -1,5 +1,10 @@
-import { AudioMixerController } from "./audio-mixer.js";
-import { NowPlayingController } from "./now-playing.js";
+import { AudioMixerController } from "./audio-mixer.js?v=13";
+import {
+    buildContextComposition,
+    ContextCompositionController
+} from "./context-composition.js?v=13";
+import { NowPlayingController } from "./now-playing.js?v=13";
+import { SpotifyControlsController } from "./spotify-controls.js?v=13";
 
 const elements = {
     activityAnnouncer: document.querySelector("#activity-announcer"),
@@ -12,6 +17,9 @@ const elements = {
     audioMasterPercentage: document.querySelector("#audio-master-percentage"),
     audioMasterVolume: document.querySelector("#audio-master-volume"),
     audioOutputDevice: document.querySelector("#audio-output-device"),
+    audioOutputList: document.querySelector("#audio-output-list"),
+    audioOutputMenu: document.querySelector("#audio-output-menu"),
+    audioOutputTrigger: document.querySelector("#audio-output-trigger"),
     audioWorkspace: document.querySelector("#audio-workspace"),
     authenticationForm: document.querySelector("#authentication-form"),
     authenticationMessage: document.querySelector("#authentication-message"),
@@ -22,10 +30,12 @@ const elements = {
     connectionState: document.querySelector("#connection-state"),
     contextActionArea: document.querySelector("#context-action-area"),
     contextActionGrid: document.querySelector("#context-action-grid"),
+    contextAudioCapabilities: document.querySelector("#context-audio-capabilities"),
     contextEntryButton: document.querySelector("#context-entry-button"),
     contextAge: document.querySelector("#context-age"),
     contextSelection: document.querySelector("#context-selection"),
     contextWorkspace: document.querySelector("#context-workspace"),
+    contextVolumeTemplate: document.querySelector("#context-volume-template"),
     currentTime: document.querySelector("#current-time"),
     diagnosticAuthentication: document.querySelector("#diagnostic-authentication"),
     diagnosticProtocol: document.querySelector("#diagnostic-protocol"),
@@ -64,6 +74,9 @@ const nowPlaying = new NowPlayingController(
     elements.compactNowPlaying,
     elements.expandedNowPlaying,
     elements.nowPlayingTemplate);
+const spotifyControls = new SpotifyControlsController(
+    nowPlaying.compactSpotifyAccessoryRoot,
+    nowPlaying.expandedSpotifyAccessoryRoot);
 const audioMixer = new AudioMixerController({
     applicationList: elements.audioApplicationList,
     applicationSummary: elements.audioApplicationSummary,
@@ -72,7 +85,17 @@ const audioMixer = new AudioMixerController({
     masterPercentage: elements.audioMasterPercentage,
     masterSlider: elements.audioMasterVolume,
     outputDevice: elements.audioOutputDevice,
+    outputDeviceList: elements.audioOutputList,
+    outputDeviceMenu: elements.audioOutputMenu,
+    outputDeviceTrigger: elements.audioOutputTrigger,
     template: elements.audioApplicationTemplate
+});
+const contextComposition = new ContextCompositionController({
+    contextRoot: elements.contextAudioCapabilities,
+    expandedRoot: nowPlaying.expandedAudioAccessoryRoot,
+    template: elements.contextVolumeTemplate,
+    requestCommand: request => audioMixer.requestCommand(request),
+    onNavigateAudio: () => elements.navAudio.click()
 });
 
 let connected = false;
@@ -90,7 +113,9 @@ let latestContextState = {
     source: "fallback"
 };
 let latestMediaState;
+let latestAudioState;
 let latestPcState;
+let latestSpotifyState;
 let layoutDebugEnabled = false;
 let manualPingPending = false;
 let mediaCommandPending = false;
@@ -172,69 +197,6 @@ function setLayoutDebug(enabled) {
     }
 }
 
-function normalizeApplicationName(value) {
-    return typeof value === "string"
-        ? value.toLowerCase().replace(/\.exe$/i, "").replace(/[^a-z0-9]/g, "")
-        : "";
-}
-
-function normalizeComparableText(value) {
-    return typeof value === "string"
-        ? value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
-        : "";
-}
-
-function browserOwnsMedia() {
-    if (latestContextState.contextId !== "browser" || latestMediaState?.hasActiveSession !== true) {
-        return false;
-    }
-
-    const foreground = normalizeApplicationName(
-        latestContextState.foregroundProcess || latestPcState?.processName);
-    if (!foreground) {
-        return false;
-    }
-
-    const mediaSource = normalizeApplicationName(
-        `${latestMediaState.sourceName || ""}${latestMediaState.sessionSourceIdentifier || ""}`);
-    if (mediaSource.includes(foreground)) {
-        return true;
-    }
-
-    const aliases = {
-        chrome: ["chrome", "googlechrome"],
-        firefox: ["firefox", "mozilla"],
-        msedge: ["msedge", "microsoftedge", "edge"]
-    };
-    if ((aliases[foreground] || [foreground]).some(alias => mediaSource.includes(alias))) {
-        return true;
-    }
-
-    // Browsers can publish opaque Windows AppUserModelIds. A matching media title in
-    // the foreground tab is a stronger ownership signal than guessing from that ID.
-    const foregroundTitle = normalizeComparableText(
-        latestContextState.foregroundWindowTitle || latestPcState?.windowTitle);
-    const mediaTitle = normalizeComparableText(latestMediaState.title);
-    return mediaTitle.length >= 8 &&
-        (foregroundTitle.includes(mediaTitle) || mediaTitle.includes(foregroundTitle));
-}
-
-function mediaPresentation() {
-    if (!connected || latestMediaState?.hasActiveSession !== true) {
-        return "hidden";
-    }
-
-    if (latestContextState.contextId === "media" || latestContextState.contextId === "default") {
-        return "expanded";
-    }
-
-    if (latestContextState.contextId === "browser" && browserOwnsMedia()) {
-        return "expanded";
-    }
-
-    return "compact";
-}
-
 function createContextAction(action) {
     const button = document.createElement("button");
     button.className = "touch-action";
@@ -268,7 +230,7 @@ function renderContextActions(actions) {
     elements.contextActionArea.hidden = actions.length === 0;
 }
 
-function workspaceContent() {
+function workspaceContent(composition) {
     const process = latestPcState?.isAvailable
         ? latestPcState.processName || "Unknown application"
         : "No foreground application";
@@ -276,20 +238,22 @@ function workspaceContent() {
     const definitions = {
         audio: {
             eyebrow: "Audio context",
-            title: "Audio workspace ready",
-            description: "Master output, device selection, and application sessions will occupy this workspace in the next feature phase.",
+            title: "System audio",
+            description: "Master output, device selection, and current application sessions.",
             actions: []
         },
         browser: {
             eyebrow: "Browser / Research",
-            title: "Research workspace ready",
-            description: "Browser-specific tools are not connected yet. Media owned by this browser is promoted automatically when Windows identifies its source.",
+            title: "Research surface",
+            description: "Browser tools can compose here later. Media is promoted only when the foreground browser can be identified as its owner.",
             actions: []
         },
         gaming: {
             eyebrow: "Gaming context",
-            title: "Gaming workspace ready",
-            description: "This surface is reserved for a compact mix of game, voice, music, and global controls once those integrations exist.",
+            title: "Priority game mix",
+            description: composition.contextAudio?.entries.length > 0
+                ? "Foreground game, Discord, media, then other active sessions—without leaving the game."
+                : "No matching game or active audio sessions are currently exposed by Windows.",
             actions: []
         },
         media: {
@@ -320,14 +284,22 @@ function workspaceContent() {
 }
 
 function renderWorkspace() {
-    const presentation = mediaPresentation();
+    const composition = buildContextComposition({
+        contextState: latestContextState,
+        pcState: latestPcState,
+        mediaState: latestMediaState,
+        audioState: latestAudioState
+    });
+    const presentation = connected ? composition.mediaPresentation : "hidden";
     const audioActive = latestContextState.contextId === "audio";
     elements.appShell.dataset.context = latestContextState.contextId || "default";
     elements.appShell.dataset.mediaPresentation = presentation;
+    elements.contextWorkspace.dataset.mode = composition.workspaceMode;
     nowPlaying.setPresentation(presentation);
-    elements.audioWorkspace.hidden = !audioActive || presentation === "expanded";
+    contextComposition.render(composition);
+    elements.audioWorkspace.hidden = !audioActive;
     elements.contextWorkspace.hidden = presentation === "expanded" || audioActive;
-    workspaceContent();
+    workspaceContent(composition);
 }
 
 function updateNavigationState() {
@@ -411,6 +383,10 @@ export const dashboardUi = {
         audioMixer.bindCommands(callback);
     },
 
+    bindSpotifyControls(callback) {
+        spotifyControls.bindCommands(callback);
+    },
+
     bindPing(callback) {
         elements.pingButton.addEventListener("click", callback);
     },
@@ -481,6 +457,7 @@ export const dashboardUi = {
     },
 
     renderAudioState(state) {
+        latestAudioState = state;
         audioMixer.setAudioState(state);
         const output = state?.isAvailable === true ? state.outputDevice : null;
         elements.navMasterVolume.textContent = output
@@ -489,6 +466,12 @@ export const dashboardUi = {
         elements.navAudio.title = output
             ? `${output.friendlyName}: ${elements.navMasterVolume.textContent}`
             : "Audio mixer unavailable";
+        renderWorkspace();
+    },
+
+    renderSpotifyState(state) {
+        latestSpotifyState = state;
+        spotifyControls.setState(state);
     },
 
     setProtocolVersion(version) {
@@ -557,6 +540,15 @@ export const dashboardUi = {
         }
     },
 
+    showSpotifyCommandResult(result) {
+        spotifyControls.handleCommandResult(result);
+        showFeedback(
+            result.message,
+            result.succeeded ? "success" : "failure",
+            result.succeeded ? 2200 : 7000);
+        elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
+    },
+
     showCommandResult(result) {
         showFeedback(result.message, result.succeeded ? "success" : "failure", result.succeeded ? 2200 : 7000);
         elements.activityAnnouncer.textContent = result.message;
@@ -576,6 +568,8 @@ export const dashboardUi = {
         connected = state === "connected";
         nowPlaying.setConnected(connected);
         audioMixer.setConnected(connected);
+        contextComposition.setConnected(connected);
+        spotifyControls.setConnected(connected);
         elements.appShell.dataset.connection = state;
         elements.connectionIndicator.dataset.state = state;
         elements.connectionState.textContent = text.toLowerCase().includes("retrying")

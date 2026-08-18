@@ -1,5 +1,5 @@
-import { DashboardSocket } from "./protocol.js";
-import { dashboardUi } from "./ui.js";
+import { DashboardSocket } from "./protocol.js?v=13";
+import { dashboardUi } from "./ui.js?v=13";
 
 const automaticPingIntervalMilliseconds = 10000;
 const tokenStorageKey = "pi-command-strip-token";
@@ -19,7 +19,7 @@ function readLayoutFixture() {
 const layoutFixture = readLayoutFixture();
 
 function applyLayoutFixture(state) {
-    if (layoutFixture === "no-media") {
+    if (["no-media", "default-no-media"].includes(layoutFixture)) {
         return {
             hasActiveSession: false,
             playbackState: "none",
@@ -48,34 +48,84 @@ function applyLayoutFixture(state) {
         };
     }
 
+    const mediaFixtures = {
+        media: ["Spotify", "Pretty (Ugly Before)", "Elliott Smith"],
+        "default-media": ["Spotify", "Weird Fishes / Arpeggi", "Radiohead"],
+        "browser-owned": ["Firefox", "A practical browser media session", "YouTube"],
+        "browser-foreign": ["Spotify", "Everything In Its Right Place", "Radiohead"],
+        gaming: ["Spotify", "Game soundtrack playlist", "Spotify"]
+    };
+    const fixture = mediaFixtures[layoutFixture];
+    if (fixture) {
+        return {
+            hasActiveSession: true,
+            sessionSourceIdentifier: `${fixture[0]}.exe`,
+            sourceName: fixture[0],
+            title: fixture[1],
+            artist: fixture[2],
+            albumTitle: null,
+            playbackState: "playing",
+            positionMilliseconds: 163000,
+            totalDurationMilliseconds: 314000,
+            supportsPrevious: true,
+            supportsNext: true,
+            supportsPlay: true,
+            supportsPause: true,
+            supportsSeeking: true,
+            artworkUrl: null,
+            lastUpdatedAtUtc: new Date().toISOString()
+        };
+    }
+
     return state;
 }
 
 function applyContextFixture(state) {
-    if (layoutFixture !== "audio") {
+    const contextFixtures = {
+        audio: ["audio", "Audio", "PiCommandStrip.App", "PiCommandStrip"],
+        media: ["media", "Media", "Spotify", "Spotify Premium"],
+        "default-media": ["default", "Default", "explorer", "Documents"],
+        "default-no-media": ["default", "Default", "explorer", "Documents"],
+        "browser-owned": ["browser", "Browser / Research", "firefox", "A practical browser media session — YouTube"],
+        "browser-foreign": ["browser", "Browser / Research", "firefox", "PiCommandStrip research — Mozilla Firefox"],
+        gaming: ["gaming", "Gaming", "cyberpunk2077", "Cyberpunk 2077"]
+    };
+    const fixture = contextFixtures[layoutFixture];
+    if (!fixture) {
         return state;
     }
 
     return {
         ...state,
-        contextId: "audio",
-        displayName: "Audio",
+        contextId: fixture[0],
+        displayName: fixture[1],
         selectionMode: "manual",
         source: "layout_fixture",
-        trigger: "audio",
+        trigger: layoutFixture,
+        foregroundProcess: fixture[2],
+        foregroundWindowTitle: fixture[3],
         activeSinceUtc: new Date().toISOString()
     };
 }
 
 function applyAudioFixture(state) {
-    if (layoutFixture !== "audio") {
+    const audioFixtures = new Set([
+        "audio",
+        "media",
+        "default-media",
+        "default-no-media",
+        "browser-owned",
+        "browser-foreign",
+        "gaming"
+    ]);
+    if (!audioFixtures.has(layoutFixture)) {
         return state;
     }
 
-    const application = (suffix, displayName, volume, active, extra = {}) => ({
+    const application = (suffix, processName, displayName, volume, active, extra = {}) => ({
         applicationId: suffix.repeat(64).slice(0, 64),
         processIds: [4000 + suffix.charCodeAt(0)],
-        processName: displayName.toLowerCase(),
+        processName,
         displayName,
         volume,
         isMuted: false,
@@ -94,19 +144,69 @@ function applyAudioFixture(state) {
             volume: 0.72,
             isMuted: false
         },
+        outputDevices: [
+            {
+                deviceId: "layout-fixture-output",
+                friendlyName: "Speakers (USB Audio Device)",
+                state: "active",
+                isDefault: true
+            },
+            {
+                deviceId: "layout-fixture-headphones",
+                friendlyName: "Headphones (Realtek USB2.0 Audio)",
+                state: "active",
+                isDefault: false
+            },
+            {
+                deviceId: "layout-fixture-monitor",
+                friendlyName: "DELL U2723QE (Display Audio)",
+                state: "active",
+                isDefault: false
+            }
+        ],
         applications: [
-            application("a", "Cyberpunk 2077", 0.78, true),
-            application("b", "Discord", 0.61, true, { sessionCount: 2 }),
-            application("c", "Spotify", 0.44, true),
-            application("d", "Firefox — YouTube and research tabs", 0.35, false, {
+            application("a", "cyberpunk2077", "Cyberpunk 2077", 0.78, true),
+            application("b", "discord", "Discord", 0.61, true, { sessionCount: 2 }),
+            application("c", "spotify", "Spotify", 0.44, true),
+            application("d", "firefox", "Firefox — YouTube and research tabs", 0.35,
+                layoutFixture === "browser-owned", {
                 sessionCount: 3,
                 hasMixedVolume: true
             }),
-            application("e", "System notification host", 0.2, false),
-            application("f", "A deliberately long application name that must truncate", 0.5, false)
+            application("e", "obs64", "OBS Studio", 0.2, layoutFixture === "gaming"),
+            application("f", "longprocess", "A deliberately long application name that must truncate", 0.5, false)
         ],
         revision: (state?.revision || 0) + 1,
         lastUpdatedUtc: new Date().toISOString()
+    };
+}
+
+function applySpotifyFixture(state) {
+    if (!["media", "default-media", "browser-foreign", "gaming"].includes(layoutFixture)) {
+        return state;
+    }
+
+    return {
+        status: "available",
+        isConfigured: true,
+        isAuthenticated: true,
+        appliesToCurrentMedia: true,
+        itemType: "track",
+        isSaved: layoutFixture !== "gaming",
+        shuffleEnabled: layoutFixture === "gaming",
+        repeatState: layoutFixture === "default-media" ? "context" : "off",
+        device: {
+            name: "Office PC",
+            type: "computer",
+            isRestricted: false
+        },
+        queue: [
+            { title: "Next item", subtitle: "Example artist", itemType: "track" },
+            { title: "A deliberately long queued item title that must truncate", subtitle: "Another artist", itemType: "track" },
+            { title: "Podcast episode", subtitle: "Example show", itemType: "episode" }
+        ],
+        lastUpdatedUtc: new Date().toISOString(),
+        retryAfterUtc: null
     };
 }
 
@@ -179,6 +279,10 @@ const dashboardSocket = new DashboardSocket({
         dashboardUi.renderAudioState(applyAudioFixture(state));
     },
 
+    onSpotifyState(state) {
+        dashboardUi.renderSpotifyState(applySpotifyFixture(state));
+    },
+
     onContextSelectionResult(result) {
         dashboardUi.showContextSelectionResult(result);
     },
@@ -198,6 +302,8 @@ const dashboardSocket = new DashboardSocket({
             dashboardUi.showMediaCommandResult(result);
         } else if (result.commandId.startsWith("audio.")) {
             dashboardUi.showAudioCommandResult(result);
+        } else if (result.commandId.startsWith("spotify.")) {
+            dashboardUi.showSpotifyCommandResult(result);
         }
     },
 
@@ -235,6 +341,10 @@ dashboardUi.bindMediaControls((commandId, positionMilliseconds) => {
 });
 
 dashboardUi.bindAudioControls(request => dashboardSocket.sendAudioCommand(
+    request.commandId,
+    request));
+
+dashboardUi.bindSpotifyControls(request => dashboardSocket.sendSpotifyCommand(
     request.commandId,
     request));
 

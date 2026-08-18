@@ -8,8 +8,9 @@ Implemented features include:
 - `/health` HTTP endpoint and authenticated `/ws` native WebSocket endpoint;
 - Windows foreground-application detection with change-only broadcasts;
 - Windows system media-session discovery and normalized change-only state broadcasts;
-- Windows Core Audio output/application-session discovery with normalized change-only mixer state;
+- Windows Core Audio output-device/application-session discovery with normalized change-only mixer state and touch output selection;
 - capability-aware Windows media controls and a touch-oriented Now Playing interface;
+- optional Spotify saved-state, shuffle, repeat, queue, and playback-device enrichment;
 - generic Default, Media, Browser / Research, Gaming, and Audio context profiles;
 - automatic process-based context switching plus authenticated manual pinning;
 - fixed server-allowlisted Notepad and media commands with a per-connection cooldown;
@@ -66,7 +67,7 @@ dotnet run --project src/PiCommandStrip.App/PiCommandStrip.App.csproj --no-build
 
 Open `http://localhost:5077`, enter the token, and press **Connect**. The page connects to `/ws` on the same origin. Press `Ctrl+C` to stop Kestrel gracefully.
 
-The dashboard is sized for the Raspberry Pi display's 1024x600 landscape CSS viewport. Add `?layoutDebug=1` to the URL, or press `Ctrl+Shift+D`, to outline the major interface regions and show the current viewport dimensions and device-pixel ratio. The shortcut can also close the overlay. For repeatable local layout checks, loopback URLs may also add `&layoutFixture=no-media` or `&layoutFixture=long-media`; these affect only rendered media state and cannot activate over a LAN hostname. This presentation tooling does not alter WebSocket messages or command behavior.
+The dashboard is sized for the Raspberry Pi display's 1024x600 landscape CSS viewport. Add `?layoutDebug=1` to the URL, or press `Ctrl+Shift+D`, to outline the major interface regions and show the current viewport dimensions and device-pixel ratio. The shortcut can also close the overlay. Repeatable loopback-only fixtures include `no-media`, `long-media`, `audio`, `media`, `default-media`, `default-no-media`, `browser-owned`, `browser-foreign`, and `gaming`, selected with `&layoutFixture=...`. They alter only rendered state and cannot activate over a LAN hostname; protocol and command behavior remain unchanged.
 
 ## Run for a Raspberry Pi client
 
@@ -76,7 +77,7 @@ Do not create a shortcut directly to `bin\Release\net10.0-windows10.0.19041.0\Pi
 
 ## Available commands
 
-The server allowlist contains `open_notepad`, `media.play`, `media.pause`, `media.playPause`, `media.previous`, `media.next`, and `media.seek`. Notepad uses its dedicated fixed launcher. Media commands call only `IMediaSessionService`; seek is the sole parameterized command and accepts one validated millisecond position. Unknown identifiers execute nothing.
+The server allowlist contains the fixed `open_notepad`, `media.*`, `audio.*`, and optional `spotify.*` identifiers documented in [the protocol](docs/protocol.md). Notepad uses its dedicated launcher; generic media commands call only `IMediaSessionService`; audio commands call only `IAudioMixerService`; Spotify enrichment commands call only `ISpotifyService`. Unknown identifiers execute nothing.
 
 Each dashboard connection has a 750 ms command cooldown to prevent accidental double taps. Adjust it with `PiCommandStrip:Commands:CooldownMilliseconds` in external configuration (or `PiCommandStrip__Commands__CooldownMilliseconds` as an environment variable). Values from 100 through 10,000 ms are accepted.
 
@@ -92,9 +93,43 @@ The compact header opens System Details, where the context selector can pin any 
 
 The host follows the current session selected by Windows System Media Transport Controls and publishes normalized metadata, playback state, timeline, supported-control flags, and an optional local artwork URL over WebSocket. Spotify and browser media such as YouTube can appear when those applications expose a Windows media session. Playback does not affect context selection: the existing foreground-process mappings remain authoritative.
 
-Media is the primary workspace in Media context and in Default when no more useful context capability exists. Browser-owned media is also promoted while Browser / Research is active; when another context has higher-value content, the same state renders as a compact persistent strip. Both presentations share the same component logic, provide a deliberate no-art fallback, support capability-aware playback buttons and touch seeking, and advance progress locally between server corrections. Artwork is read only from the Windows media session, kept in a bounded one-entry memory cache, and served by the local host; Spotify Web API and external image requests are not used.
+Media is the primary workspace in Media context and in Default when no more useful context capability exists. Browser-owned media is also promoted while Browser / Research is active; when another context has higher-value content, the same state renders as a compact persistent strip. Both presentations share the same component logic, provide a deliberate no-art fallback, support capability-aware playback buttons and touch seeking, and advance progress locally between server corrections. Artwork is still read only from the Windows media session, kept in a bounded one-entry memory cache, and served by the local host; Spotify enrichment never replaces this generic path or requests external artwork.
 
 The normal interface is a compact status header, one dynamic workspace, and a small Home/Media/Audio/More navigation row. Foreground process is supporting metadata rather than the main panel. PID, context age, manual RTT, and manual context selection live in System Details. Prototype Notepad and latency cards are no longer primary controls; ordinary command outcomes appear as accessible transient feedback instead of permanent result panels.
+
+Contexts compose the same media and audio capabilities rather than owning separate implementations. Media and media-owning Browser views add a matched application-volume row beneath expanded Now Playing; Gaming orders a compact mixer as foreground game, Discord, matched media, then other active sessions; Default promotes media when present and otherwise offers master output. Matching prefers exact normalized process/source names and the small known application-family map. Browser title matching is used only to establish ownership when Windows publishes an opaque media source. If a candidate is missing or non-unique, PiCommandStrip omits the inline volume control instead of risking the wrong application; the full Audio destination remains available.
+
+## Optional Spotify enrichment
+
+Spotify support is disabled by default. It enriches only a Windows media session that explicitly identifies Spotify and whose title exactly matches Spotify's current Web API item. Like/unlike, shuffle, and repeat appear beside the existing Now Playing controls; queue and current Spotify device are secondary information. Generic Windows title, artist, artwork, timeline, and transport controls remain authoritative and work without Spotify configuration or during Spotify API errors/rate limits.
+
+Create a Spotify app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), add this exact redirect URI for the standard development port, and add your Spotify account to the app's Development Mode user allowlist:
+
+```text
+http://127.0.0.1:5077/spotify/auth/callback
+```
+
+Spotify requires an explicit loopback IP; `http://localhost:5077/...` is not interchangeable. Then store the host-only settings outside Git:
+
+```powershell
+dotnet user-secrets set "PiCommandStrip:Spotify:Enabled" "true" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+dotnet user-secrets set "PiCommandStrip:Spotify:ClientId" "<client-id>" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+dotnet user-secrets set "PiCommandStrip:Spotify:ClientSecret" "<client-secret>" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+dotnet user-secrets set "PiCommandStrip:Spotify:RedirectUri" "http://127.0.0.1:5077/spotify/auth/callback" --project src/PiCommandStrip.App/PiCommandStrip.App.csproj
+```
+
+Start PiCommandStrip in Development mode, then open `http://127.0.0.1:5077/spotify/auth/start` on the Windows PC and approve the four requested scopes. The OAuth endpoints deliberately return `404` to non-loopback callers, so the Raspberry Pi never handles Spotify credentials. After the success page appears, the refresh credential remains available to later host runs under the same Windows user.
+
+PiCommandStrip explicitly loads its repository-external User Secrets for both Development and the named `Lan` environment, while Windows-host environment variables and command-line options keep higher precedence. The same settings therefore work with the normal LAN launcher under the same Windows account; do not put them in `appsettings.json`, a Pi startup script, or browser storage. The access token stays in Windows-host memory. The refresh token is encrypted with ASP.NET Core Data Protection in `%LOCALAPPDATA%\PiCommandStrip\spotify-authorization.v1`, with DPAPI-protected keys under `%LOCALAPPDATA%\PiCommandStrip\DataProtection-Keys`; the client secret remains in the Windows User Secrets store. Spotify refresh credentials currently expire after six months, so repeat the loopback authorization when required.
+
+The requested scopes are exactly:
+
+- `user-read-playback-state` — current Spotify item, queue, shuffle/repeat state, and current playback device;
+- `user-modify-playback-state` — change shuffle and repeat;
+- `user-library-read` — check whether the current item is saved; and
+- `user-library-modify` — save or remove the current item.
+
+Spotify's current Development Mode requires the app owner to have Premium, restricts a new app to one client ID and up to five allowlisted users, and applies a lower rolling rate quota. Player modification endpoints require Premium. The integration uses the server-side Authorization Code flow because the Windows host can keep a client secret; no secret or refresh credential is ever sent to browser JavaScript.
 
 ## Windows audio mixer state
 
@@ -102,7 +137,9 @@ The host separately monitors the default multimedia output device and its Window
 
 Multiple sessions with the same recognizable process name are grouped into one application entry; metadata-poor sessions use Windows grouping/session identity and are never merged by display text alone. Raw Windows session identifiers remain server-side so the Audio page can target every member of a grouped application. Explicit system-sounds and expired sessions are omitted, but incomplete ordinary sessions remain visible.
 
-The Audio destination provides touch-friendly master and application volume/mute controls. Slider changes are coalesced during a drag and always send a final release value; incoming `audio_state` remains authoritative. Application IDs are resolved against the current mixer state before the Windows-specific service changes any underlying sessions. Microphones, output-device switching, peak meters, routing, and equalization remain out of scope.
+The Audio destination provides touch-friendly master and application volume/mute controls. Tapping the current output opens a compact list of active Windows playback endpoints; a selection is accepted only when its opaque ID still exists in the current mixer state, and the UI waits for authoritative confirmation. Slider changes are coalesced during a drag and always send a final release value; incoming `audio_state` remains authoritative. Application IDs are likewise resolved against current state before the Windows-specific service changes any underlying sessions. Microphones, per-application device routing, communications-device selection, peak meters, and equalization remain out of scope.
+
+Windows publicly supports playback-endpoint enumeration and default-change observation, but it does not publish a desktop API for setting the system default. PiCommandStrip isolates the private PolicyConfig COM mechanism used by established Windows switchers, changes the Console and Multimedia roles, and leaves Communications unchanged. This is a best-effort Windows 10/11 integration: a future Windows update could require maintenance to that adapter. No extra package, shell command, registry path, or external switcher is used.
 
 ## Project layout
 

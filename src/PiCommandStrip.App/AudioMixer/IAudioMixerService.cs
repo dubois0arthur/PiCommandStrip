@@ -21,6 +21,10 @@ public interface IAudioMixerService
         string applicationId,
         bool isMuted,
         CancellationToken cancellationToken);
+
+    Task<AudioMixerCommandResult> SetOutputDeviceAsync(
+        string deviceId,
+        CancellationToken cancellationToken);
 }
 
 public interface IAudioStateBroadcaster

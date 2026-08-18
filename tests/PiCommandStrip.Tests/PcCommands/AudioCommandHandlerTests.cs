@@ -83,6 +83,48 @@ public sealed class AudioCommandHandlerTests
         Assert.Equal(0, service.CallCount);
     }
 
+    [Fact]
+    public async Task SetOutputDevice_ValidIdentifier_DelegatesOpaqueIdentifier()
+    {
+        const string deviceId = "{0.0.0.00000000}.fixture-output";
+        var service = new RecordingAudioMixerService();
+        var handler = new AudioCommandHandler(
+            PcCommandIds.AudioSetOutputDevice,
+            service);
+
+        var result = await handler.ExecuteAsync(
+            new PcCommandInvocation(
+                PcCommandIds.AudioSetOutputDevice,
+                DeviceId: deviceId),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(deviceId, service.DeviceId);
+        Assert.Equal(1, service.CallCount);
+    }
+
+    [Fact]
+    public async Task SetOutputDevice_ServiceReportsStaleIdentifier_ReturnsSafeFailure()
+    {
+        var service = new RecordingAudioMixerService
+        {
+            OutputDeviceResult = AudioMixerCommandResult.Failure(
+                "That audio output device is no longer available.")
+        };
+        var handler = new AudioCommandHandler(
+            PcCommandIds.AudioSetOutputDevice,
+            service);
+
+        var result = await handler.ExecuteAsync(
+            new PcCommandInvocation(
+                PcCommandIds.AudioSetOutputDevice,
+                DeviceId: "stale-device"),
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.DoesNotContain("COM", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class RecordingAudioMixerService : IAudioMixerService
     {
         public AudioState Current { get; } = AudioState.Unavailable(DateTimeOffset.UtcNow);
@@ -94,6 +136,11 @@ public sealed class AudioCommandHandlerTests
         public float? Volume { get; private set; }
 
         public bool? IsMuted { get; private set; }
+
+        public string? DeviceId { get; private set; }
+
+        public AudioMixerCommandResult OutputDeviceResult { get; init; } =
+            AudioMixerCommandResult.Success("Output device changed.");
 
         public Task<AudioMixerCommandResult> SetMasterVolumeAsync(
             float volume,
@@ -137,6 +184,16 @@ public sealed class AudioCommandHandlerTests
             ApplicationId = applicationId;
             IsMuted = isMuted;
             return Success();
+        }
+
+        public Task<AudioMixerCommandResult> SetOutputDeviceAsync(
+            string deviceId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
+            DeviceId = deviceId;
+            return Task.FromResult(OutputDeviceResult);
         }
 
         private static Task<AudioMixerCommandResult> Success() =>

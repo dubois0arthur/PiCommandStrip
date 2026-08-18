@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 8 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 10 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, automatic/manual context selection, structured errors, and fixed allowlisted Notepad, media, and audio commands. Version 8 adds typed audio volume/mute controls while retaining version 7 `audio_state` and version 6 media artwork behavior.
+This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, optional Spotify enrichment state, automatic/manual context selection, structured errors, and fixed allowlisted commands. Version 10 adds optional Spotify library/shuffle/repeat commands and enrichment state while retaining version 9 output selection and all generic media behavior.
 
 ## Transport
 
@@ -52,17 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "8",
+    "protocolVersion": "10",
     "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `8`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `10`.
 - `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
 
-The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 8 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 10 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -138,6 +138,10 @@ The allowlisted identifiers are:
 - `audio.setMasterMute`
 - `audio.setApplicationVolume`
 - `audio.setApplicationMute`
+- `audio.setOutputDevice`
+- `spotify.setSaved`
+- `spotify.setShuffle`
+- `spotify.setRepeat`
 
 `media.seek` has exactly this shape:
 
@@ -172,6 +176,24 @@ Audio volume commands carry a finite normalized `volume` from `0.0` through `1.0
 
 The server resolves application IDs only against the current normalized mixer state, then applies the change to every still-live underlying Windows session in that group. A stale or disappeared ID returns a failed `command_result`. Master commands target only the current default multimedia render endpoint. Ordinary commands retain the configured 750-millisecond per-connection cooldown; coalesced audio volume updates use a separate 40-millisecond server gate so a final touch release is not blocked by the previous drag sample.
 
+Output selection carries exactly the opaque `deviceId` from the latest `audio_state`:
+
+```json
+{
+  "type": "command_request",
+  "messageId": "d227745c-5d58-4859-92fb-b5586c685b13",
+  "timestampUtc": "2026-08-18T12:00:03.000Z",
+  "payload": {
+    "commandId": "audio.setOutputDevice",
+    "deviceId": "{0.0.0.00000000}.{example-device-id}"
+  }
+}
+```
+
+The parser bounds the ID to 512 characters, and the audio service then requires an exact ordinal match to an active endpoint in its current normalized state. A display name, stale ID, executable path, registry path, or extra property cannot select a device. PiCommandStrip changes the Windows Console and Multimedia default render roles; it deliberately leaves the Communications default unchanged.
+
+Spotify enhancement commands are accepted only for the server's confidently matched current Spotify item. Their exact additional fields are a Boolean `isSaved`, a Boolean `shuffleEnabled`, or a `repeatState` of `off`, `context`, or `track`, respectively. No access token, client secret, Spotify URI, device ID, arbitrary endpoint, or extra property is accepted from the browser. These commands call only `ISpotifyService` and return ordinary `command_result` messages. The generic `media.*` controls remain separate and continue to work if Spotify is disabled or unavailable.
+
 ## Server-to-client messages
 
 ### `server_hello`
@@ -185,7 +207,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "8",
+    "protocolVersion": "10",
     "maximumMessageSizeBytes": 16384,
     "availableContexts": [
       { "contextId": "default", "displayName": "Default" },
@@ -339,6 +361,20 @@ Reports the normalized state of the default multimedia render endpoint and its u
       "volume": 0.72,
       "isMuted": false
     },
+    "outputDevices": [
+      {
+        "deviceId": "{0.0.0.00000000}.{example-device-id}",
+        "friendlyName": "Speakers (USB Audio Device)",
+        "state": "active",
+        "isDefault": true
+      },
+      {
+        "deviceId": "{0.0.0.00000000}.{example-headphones-id}",
+        "friendlyName": "Headphones",
+        "state": "active",
+        "isDefault": false
+      }
+    ],
     "applications": [
       {
         "applicationId": "9b88c63f4dd15f40d263d0ff745d5fc906422256178790824662f4a45e0cc880",
@@ -359,13 +395,49 @@ Reports the normalized state of the default multimedia render endpoint and its u
 }
 ```
 
-`volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 8.
+`outputDevices` contains the currently usable Windows render endpoints. `deviceId` is the stable opaque Core Audio endpoint ID, `friendlyName` is display text, `state` is currently `active` for a usable entry, and exactly the observed Multimedia default is marked with `isDefault`. Device IDs are not filesystem paths and the selector never treats them as executable input. Application `volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. Application `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 10.
 
 `applicationId` is a server-generated SHA-256 identifier for the grouping key. It is stable while the grouping evidence is stable and never exposes a process path or raw Windows session identifier. `sessionCount` shows how many underlying Windows controls contribute to the entry. `hasMixedVolume` and `hasMixedMute` indicate that those controls disagree. The reported grouped volume is the maximum member scalar, and grouped `isMuted` is true only when every member is muted.
 
-When no default output is available, `isAvailable` is `false`, `outputDevice` is `null`, and `applications` is empty. `revision` starts at zero and increases monotonically for this host process whenever the normalized meaning changes. `lastUpdatedUtc` records that meaningful observation; timestamp-only samples do not produce a message.
+When no default output is available, `isAvailable` is `false`, `outputDevice` is `null`, and `applications` is empty. `outputDevices` can still contain active endpoints that may establish a new default. `revision` starts at zero and increases monotonically for this host process whenever the normalized meaning changes, including endpoint arrival/removal and default-role changes. `lastUpdatedUtc` records that meaningful observation; timestamp-only samples do not produce a message.
 
-Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 8 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative.
+Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 10 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative. The device selector shows processing feedback but does not mark a choice current until an authoritative state identifies it as the default.
+
+### `spotify_state`
+
+Reports optional Spotify-only enrichment. It is sent to a newly authenticated client after the generic media/audio snapshots and then only when its meaning changes.
+
+```json
+{
+  "type": "spotify_state",
+  "messageId": "a3da68ce-54ec-46d6-94d2-cb597fca00d7",
+  "timestampUtc": "2026-08-18T12:00:03.0900000+00:00",
+  "payload": {
+    "status": "available",
+    "isConfigured": true,
+    "isAuthenticated": true,
+    "appliesToCurrentMedia": true,
+    "itemType": "track",
+    "isSaved": true,
+    "shuffleEnabled": false,
+    "repeatState": "off",
+    "device": {
+      "name": "Office PC",
+      "type": "computer",
+      "isRestricted": false
+    },
+    "queue": [
+      { "title": "Next item", "subtitle": "Example artist", "itemType": "track" }
+    ],
+    "lastUpdatedUtc": "2026-08-18T12:00:03.0890000+00:00",
+    "retryAfterUtc": null
+  }
+}
+```
+
+`status` is `unconfigured`, `unauthenticated`, `idle`, `available`, `rate_limited`, or `error`. Controls render only when `appliesToCurrentMedia` is true, which requires an explicit Spotify Windows media source and an exact normalized title match against Spotify's current Web API item. This deliberately conservative join prevents a browser or another player from receiving Spotify controls. Queue entries are capped at five. Server-only Spotify item URIs and match evidence are never serialized.
+
+An enrichment error may retain the last matched values for readable degraded state while setting `status` to `error` or `rate_limited`; controls are disabled until recovery. `retryAfterUtc` is present only when Spotify supplies a rate-limit delay. `unconfigured`, `unauthenticated`, and non-Spotify `idle` states do not affect generic `media_state` or any `media.*` command.
 
 ### `context_selection_result`
 
@@ -441,7 +513,7 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` with protocol version 8, its fresh UTC timestamp, and the configured token.
+4. The dashboard sends `client_hello` with protocol version 10, its fresh UTC timestamp, and the configured token.
 5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
 6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, and `audio_state` snapshots in that order.
 7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, and audio changes are broadcast independently.

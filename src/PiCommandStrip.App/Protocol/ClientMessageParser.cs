@@ -2,6 +2,7 @@ using System.Text.Json;
 using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.PcCommands;
+using PiCommandStrip.App.Spotify;
 
 namespace PiCommandStrip.App.Protocol;
 
@@ -229,6 +230,75 @@ public sealed class ClientMessageParser
                     commandId,
                     ApplicationId: applicationId,
                     IsMuted: isMuted)));
+        }
+
+        if (commandId == PcCommandIds.AudioSetOutputDevice)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "deviceId") ||
+                !TryGetRequiredString(payload, "deviceId", out var deviceId) ||
+                !AudioOutputDeviceTargetResolver.IsValidDeviceIdShape(deviceId))
+            {
+                return InvalidAudioPayload(
+                    messageId,
+                    $"'{commandId}' requires only 'commandId' and a non-empty bounded 'deviceId'.");
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, DeviceId: deviceId)));
+        }
+
+        if (commandId == PcCommandIds.SpotifySetSaved)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "isSaved") ||
+                !TryGetRequiredBoolean(payload, "isSaved", out var isSaved))
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'{commandId}' requires only 'commandId' and a Boolean 'isSaved'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, IsSaved: isSaved)));
+        }
+
+        if (commandId == PcCommandIds.SpotifySetShuffle)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "shuffleEnabled") ||
+                !TryGetRequiredBoolean(payload, "shuffleEnabled", out var shuffleEnabled))
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'{commandId}' requires only 'commandId' and a Boolean 'shuffleEnabled'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, ShuffleEnabled: shuffleEnabled)));
+        }
+
+        if (commandId == PcCommandIds.SpotifySetRepeat)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "repeatState") ||
+                !TryGetRequiredString(payload, "repeatState", out var repeatState) ||
+                !SpotifyRepeatStates.IsValid(repeatState))
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'{commandId}' requires only 'commandId' and 'repeatState' as 'off', 'context', or 'track'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, RepeatState: repeatState)));
         }
 
         if (!HasExactlyOneProperty(payload, "commandId"))

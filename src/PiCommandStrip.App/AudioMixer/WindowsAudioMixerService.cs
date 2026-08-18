@@ -9,6 +9,7 @@ public sealed class WindowsAudioMixerService(
     AudioStateStore stateStore,
     AudioStateNormalizer normalizer,
     IAudioStateBroadcaster broadcaster,
+    IDefaultAudioOutputDeviceSwitcher defaultOutputDeviceSwitcher,
     TimeProvider timeProvider,
     ILogger<WindowsAudioMixerService> logger) : BackgroundService, IAudioMixerService
 {
@@ -17,6 +18,8 @@ public sealed class WindowsAudioMixerService(
     private const string AudioUnavailableMessage = "Windows audio is currently unavailable.";
     private const string ApplicationUnavailableMessage =
         "That audio application is no longer available.";
+    private const string OutputDeviceUnavailableMessage =
+        "That audio output device is no longer available.";
 
     private readonly Dictionary<string, SessionHandle> _sessions = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _refreshSignal = new(0, 1);
@@ -27,12 +30,14 @@ public sealed class WindowsAudioMixerService(
             SingleWriter = false,
             FullMode = BoundedChannelFullMode.Wait
         });
+    private IReadOnlyList<AudioOutputDeviceDescriptorSnapshot> _outputDevices = [];
     private MMDeviceEnumerator? _deviceEnumerator;
     private MMDevice? _outputDevice;
     private AudioEndpointVolume? _endpointVolume;
     private AudioSessionManager? _sessionManager;
     private int _pendingRefreshFlags = (int)RefreshFlags.All;
     private int _acceptsCommands;
+    private bool _forceFullRefreshAfterControl;
     private DateTimeOffset _nextFullSessionRescanUtc = DateTimeOffset.MinValue;
 
     public AudioState Current => stateStore.Current;
@@ -73,6 +78,18 @@ public sealed class WindowsAudioMixerService(
                 applicationId,
                 null,
                 isMuted),
+            cancellationToken);
+
+    public Task<AudioMixerCommandResult> SetOutputDeviceAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        QueueControlAsync(
+            new AudioControlOperation(
+                AudioControlKind.OutputDevice,
+                null,
+                null,
+                null,
+                deviceId),
             cancellationToken);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -117,7 +134,11 @@ public sealed class WindowsAudioMixerService(
                     var normalized = normalizer.Normalize(snapshot, now);
                     if (ProcessPendingControlRequests(normalized))
                     {
-                        snapshot = Observe(RefreshFlags.State);
+                        var postControlRefresh = _forceFullRefreshAfterControl
+                            ? RefreshFlags.All
+                            : RefreshFlags.State;
+                        _forceFullRefreshAfterControl = false;
+                        snapshot = Observe(postControlRefresh);
                         normalized = normalizer.Normalize(snapshot, timeProvider.GetUtcNow());
                     }
 
@@ -195,6 +216,14 @@ public sealed class WindowsAudioMixerService(
                 request.Completion.TrySetResult(
                     AudioMixerCommandResult.Failure("The audio change could not be completed."));
             }
+
+            if (_forceFullRefreshAfterControl)
+            {
+                // Rebind the endpoint before any queued master/session operation
+                // can touch the device that was current before this selection.
+                RequestRefresh(RefreshFlags.State);
+                break;
+            }
         }
 
         return processedAny;
@@ -204,7 +233,8 @@ public sealed class WindowsAudioMixerService(
         AudioControlOperation operation,
         AudioState observedState)
     {
-        if (_endpointVolume is null || !observedState.IsAvailable)
+        if (operation.Kind is not AudioControlKind.OutputDevice &&
+            (_endpointVolume is null || !observedState.IsAvailable))
         {
             return AudioMixerCommandResult.Failure(AudioUnavailableMessage);
         }
@@ -231,8 +261,34 @@ public sealed class WindowsAudioMixerService(
                         applicationId,
                         handle => handle.SetMute(isMuted),
                         isMuted ? "Application muted." : "Application unmuted."),
+            AudioControlKind.OutputDevice when operation.DeviceId is { } deviceId =>
+                SetOutputDevice(observedState, deviceId),
             _ => AudioMixerCommandResult.Failure("The audio change is invalid.")
         };
+    }
+
+    private AudioMixerCommandResult SetOutputDevice(
+        AudioState observedState,
+        string deviceId)
+    {
+        var device = AudioOutputDeviceTargetResolver.ResolveActiveDevice(
+            observedState,
+            deviceId);
+        if (device is null)
+        {
+            return AudioMixerCommandResult.Failure(OutputDeviceUnavailableMessage);
+        }
+
+        if (device.IsDefault)
+        {
+            return AudioMixerCommandResult.Success("Output device is already selected.");
+        }
+
+        // Even a failed attempt can mean that the device disappeared after the
+        // observation, so always rebuild endpoint and session state afterward.
+        _forceFullRefreshAfterControl = true;
+        defaultOutputDeviceSwitcher.SetDefaultOutputDevice(device.DeviceId);
+        return AudioMixerCommandResult.Success("Output device changed.");
     }
 
     private AudioMixerCommandResult SetMasterVolume(float volume)
@@ -319,7 +375,7 @@ public sealed class WindowsAudioMixerService(
 
         if (_outputDevice is null || _endpointVolume is null || _sessionManager is null)
         {
-            return new AudioMixerSnapshot(null, []);
+            return new AudioMixerSnapshot(null, [], _outputDevices);
         }
 
         if ((flags & RefreshFlags.Sessions) != 0)
@@ -359,7 +415,7 @@ public sealed class WindowsAudioMixerService(
             _outputDevice.FriendlyName,
             _endpointVolume.MasterVolumeLevelScalar,
             _endpointVolume.Mute);
-        return new AudioMixerSnapshot(outputSnapshot, sessionSnapshots);
+        return new AudioMixerSnapshot(outputSnapshot, sessionSnapshots, _outputDevices);
     }
 
     private void RefreshOutputDevice()
@@ -369,15 +425,20 @@ public sealed class WindowsAudioMixerService(
             return;
         }
 
-        if (!_deviceEnumerator.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia))
+        MMDevice? candidate = _deviceEnumerator.HasDefaultAudioEndpoint(
+            DataFlow.Render,
+            Role.Multimedia)
+                ? _deviceEnumerator.GetDefaultAudioEndpoint(
+                    DataFlow.Render,
+                    Role.Multimedia)
+                : null;
+        RefreshAvailableOutputDevices(candidate?.ID);
+        if (candidate is null)
         {
             DisposeOutputDevice();
             return;
         }
 
-        MMDevice? candidate = _deviceEnumerator.GetDefaultAudioEndpoint(
-            DataFlow.Render,
-            Role.Multimedia);
         var transferred = false;
 
         try
@@ -412,6 +473,59 @@ public sealed class WindowsAudioMixerService(
             }
         }
     }
+
+    private void RefreshAvailableOutputDevices(string? defaultDeviceId)
+    {
+        if (_deviceEnumerator is null)
+        {
+            _outputDevices = [];
+            return;
+        }
+
+        var devices = _deviceEnumerator.EnumerateAudioEndPoints(
+            DataFlow.Render,
+            DeviceState.Active);
+        var snapshots = new List<AudioOutputDeviceDescriptorSnapshot>(devices.Count);
+
+        for (var index = 0; index < devices.Count; index++)
+        {
+            MMDevice? device = null;
+
+            try
+            {
+                device = devices[index];
+                snapshots.Add(new AudioOutputDeviceDescriptorSnapshot(
+                    device.ID,
+                    device.FriendlyName,
+                    MapDeviceState(device.State),
+                    string.Equals(
+                        device.ID,
+                        defaultDeviceId,
+                        StringComparison.Ordinal)));
+            }
+            catch (Exception exception)
+            {
+                logger.LogDebug(
+                    exception,
+                    "An audio output device disappeared while it was being enumerated");
+            }
+            finally
+            {
+                device?.Dispose();
+            }
+        }
+
+        _outputDevices = snapshots;
+    }
+
+    private static AudioOutputDeviceStatus MapDeviceState(DeviceState state) => state switch
+    {
+        DeviceState.Active => AudioOutputDeviceStatus.Active,
+        DeviceState.Disabled => AudioOutputDeviceStatus.Disabled,
+        DeviceState.NotPresent => AudioOutputDeviceStatus.NotPresent,
+        DeviceState.Unplugged => AudioOutputDeviceStatus.Unplugged,
+        _ => AudioOutputDeviceStatus.Unknown
+    };
 
     private void ReconcileSessions()
     {
@@ -610,14 +724,16 @@ public sealed class WindowsAudioMixerService(
         MasterVolume,
         MasterMute,
         ApplicationVolume,
-        ApplicationMute
+        ApplicationMute,
+        OutputDevice
     }
 
     private sealed record AudioControlOperation(
         AudioControlKind Kind,
         string? ApplicationId,
         float? Volume,
-        bool? IsMuted);
+        bool? IsMuted,
+        string? DeviceId = null);
 
     private sealed class AudioControlRequest(
         AudioControlOperation operation,

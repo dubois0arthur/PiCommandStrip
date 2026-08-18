@@ -69,6 +69,73 @@ public sealed class AudioStateStoreTests
     }
 
     [Fact]
+    public void TryUpdate_OutputDeviceInventoryChange_RefreshesState()
+    {
+        var store = CreateStore();
+        var initial = State();
+        store.TryUpdate(initial, out _);
+        var withHeadphones = initial with
+        {
+            OutputDevices =
+            [
+                .. initial.OutputDevices,
+                new AudioOutputDeviceDescriptorState(
+                    "headphones",
+                    "Headphones",
+                    AudioOutputDeviceStates.Active,
+                    false)
+            ]
+        };
+
+        Assert.True(store.TryUpdate(withHeadphones, out var changed));
+
+        Assert.Equal(2, changed.OutputDevices.Count);
+        Assert.Equal(2, changed.Revision);
+    }
+
+    [Fact]
+    public void TryUpdate_DefaultSelectionRefresh_ReplacesMasterAndDefaultFlags()
+    {
+        var store = CreateStore();
+        var initial = State() with
+        {
+            OutputDevices =
+            [
+                new AudioOutputDeviceDescriptorState(
+                    "speakers",
+                    "Speakers",
+                    AudioOutputDeviceStates.Active,
+                    true),
+                new AudioOutputDeviceDescriptorState(
+                    "headphones",
+                    "Headphones",
+                    AudioOutputDeviceStates.Active,
+                    false)
+            ]
+        };
+        store.TryUpdate(initial, out _);
+        var refreshed = initial with
+        {
+            OutputDevice = new AudioOutputDeviceState(
+                "headphones",
+                "Headphones",
+                0.35f,
+                false),
+            OutputDevices =
+            [
+                initial.OutputDevices[1] with { IsDefault = true },
+                initial.OutputDevices[0] with { IsDefault = false }
+            ]
+        };
+
+        Assert.True(store.TryUpdate(refreshed, out var changed));
+
+        Assert.Equal("headphones", changed.OutputDevice?.DeviceId);
+        Assert.True(changed.OutputDevices[0].IsDefault);
+        Assert.Equal(2, changed.Revision);
+    }
+
+    [Fact]
     public void TryUpdate_OutputVolumeAndMuteChanges_AreMeaningful()
     {
         var store = CreateStore();
@@ -126,6 +193,11 @@ public sealed class AudioStateStoreTests
         return new AudioState(
             true,
             new AudioOutputDeviceState(deviceId, "Output", outputVolume, outputMuted),
+            [new AudioOutputDeviceDescriptorState(
+                deviceId,
+                "Output",
+                AudioOutputDeviceStates.Active,
+                true)],
             [application],
             0,
             updatedAt ?? InitialTime.AddSeconds(1));

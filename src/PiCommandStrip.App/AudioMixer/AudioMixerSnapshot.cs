@@ -8,6 +8,21 @@ public enum AudioSessionStatus
     Expired
 }
 
+public enum AudioOutputDeviceStatus
+{
+    Unknown,
+    Active,
+    Disabled,
+    NotPresent,
+    Unplugged
+}
+
+public sealed record AudioOutputDeviceDescriptorSnapshot(
+    string? DeviceId,
+    string? FriendlyName,
+    AudioOutputDeviceStatus State,
+    bool IsDefault);
+
 public sealed record AudioOutputDeviceSnapshot(
     string? DeviceId,
     string? FriendlyName,
@@ -28,4 +43,5 @@ public sealed record AudioSessionSnapshot(
 
 public sealed record AudioMixerSnapshot(
     AudioOutputDeviceSnapshot? OutputDevice,
-    IReadOnlyList<AudioSessionSnapshot> Sessions);
+    IReadOnlyList<AudioSessionSnapshot> Sessions,
+    IReadOnlyList<AudioOutputDeviceDescriptorSnapshot>? OutputDevices = null);

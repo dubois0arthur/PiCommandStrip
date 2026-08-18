@@ -10,7 +10,7 @@ function toPercentage(value) {
     return Math.round(clampVolume(value) * 100);
 }
 
-class VolumeSliderController {
+export class VolumeSliderController {
     #authoritativeValue = 0;
     #disposed = false;
     #finalTimer;
@@ -185,7 +185,7 @@ class VolumeSliderController {
     }
 }
 
-class MuteButtonController {
+export class MuteButtonController {
     #authoritativeValue = false;
     #button;
     #enabled = false;
@@ -347,6 +347,165 @@ class ApplicationRowController {
     }
 }
 
+class OutputDeviceSelectorController {
+    #connected = false;
+    #currentDevice;
+    #devices = [];
+    #label;
+    #list;
+    #menu;
+    #onRequest;
+    #pendingDeviceId;
+    #pendingTimer;
+    #trigger;
+
+    constructor(trigger, label, menu, list, onRequest) {
+        this.#trigger = trigger;
+        this.#label = label;
+        this.#menu = menu;
+        this.#list = list;
+        this.#onRequest = onRequest;
+
+        trigger.addEventListener("click", () => this.#setOpen(menu.hidden));
+        document.addEventListener("pointerdown", event => {
+            if (!menu.hidden && !event.target.closest(".audio-output-selector")) {
+                this.#setOpen(false);
+            }
+        });
+        window.addEventListener("keydown", event => {
+            if (event.key === "Escape" && !menu.hidden) {
+                this.#setOpen(false);
+                trigger.focus();
+            }
+        });
+    }
+
+    setConnected(connected) {
+        this.#connected = connected;
+        if (!connected) {
+            this.#clearPending();
+            this.#setOpen(false);
+        }
+        this.#render();
+    }
+
+    setAudioState(state) {
+        this.#devices = [...(state?.outputDevices || [])];
+        this.#currentDevice = state?.outputDevice ||
+            this.#devices.find(device => device.isDefault) ||
+            null;
+
+        const authoritativeId = state?.outputDevice?.deviceId ||
+            this.#devices.find(device => device.isDefault)?.deviceId;
+        if (this.#pendingDeviceId && authoritativeId === this.#pendingDeviceId) {
+            this.#clearPending();
+            this.#setOpen(false);
+        }
+
+        this.#render();
+    }
+
+    rejectPending(deviceId) {
+        if (this.#pendingDeviceId !== deviceId) {
+            return;
+        }
+
+        this.#clearPending();
+        this.#render();
+    }
+
+    #select(device) {
+        if (!this.#connected ||
+            this.#pendingDeviceId ||
+            device.state !== "active") {
+            return;
+        }
+
+        if (device.isDefault || device.deviceId === this.#currentDevice?.deviceId) {
+            this.#setOpen(false);
+            return;
+        }
+
+        this.#pendingDeviceId = device.deviceId;
+        this.#setOpen(false);
+        this.#render();
+        clearTimeout(this.#pendingTimer);
+        this.#pendingTimer = setTimeout(() => {
+            if (this.#pendingDeviceId === device.deviceId) {
+                this.#clearPending();
+                this.#render();
+            }
+        }, optimisticReconciliationMilliseconds + 1200);
+
+        this.#onRequest({
+            commandId: "audio.setOutputDevice",
+            deviceId: device.deviceId,
+            controller: this,
+            value: device.deviceId
+        });
+    }
+
+    #setOpen(open) {
+        const canOpen = this.#connected &&
+            !this.#pendingDeviceId &&
+            this.#devices.some(device => device.state === "active");
+        const next = open && canOpen;
+        this.#menu.hidden = !next;
+        this.#trigger.setAttribute("aria-expanded", next ? "true" : "false");
+    }
+
+    #render() {
+        const pending = this.#devices.find(device =>
+            device.deviceId === this.#pendingDeviceId);
+        const friendlyName = this.#currentDevice?.friendlyName ||
+            "No output device available";
+        this.#label.textContent = pending
+            ? `Switching to ${pending.friendlyName || "output"}…`
+            : friendlyName;
+        this.#label.title = this.#label.textContent;
+        this.#trigger.disabled = !this.#connected ||
+            Boolean(this.#pendingDeviceId) ||
+            !this.#devices.some(device => device.state === "active");
+        this.#trigger.toggleAttribute("aria-busy", Boolean(this.#pendingDeviceId));
+
+        const options = this.#devices.map(device => {
+            const button = document.createElement("button");
+            const selected = device.isDefault ||
+                device.deviceId === this.#currentDevice?.deviceId;
+            button.className = "audio-output-option";
+            button.type = "button";
+            button.setAttribute("role", "option");
+            button.setAttribute("aria-selected", selected ? "true" : "false");
+            button.disabled = Boolean(this.#pendingDeviceId) || device.state !== "active";
+
+            const marker = document.createElement("span");
+            marker.className = "audio-output-option-marker";
+            marker.textContent = selected ? "✓" : "";
+            marker.setAttribute("aria-hidden", "true");
+
+            const copy = document.createElement("span");
+            const name = document.createElement("strong");
+            name.textContent = device.friendlyName || "Unknown output device";
+            const status = document.createElement("span");
+            status.textContent = selected
+                ? "Current default"
+                : device.state === "active" ? "Available" : device.state;
+            copy.append(name, status);
+            button.append(marker, copy);
+            button.addEventListener("click", () => this.#select(device));
+            return button;
+        });
+
+        this.#list.replaceChildren(...options);
+    }
+
+    #clearPending() {
+        clearTimeout(this.#pendingTimer);
+        this.#pendingTimer = undefined;
+        this.#pendingDeviceId = undefined;
+    }
+}
+
 export class AudioMixerController {
     #applicationList;
     #applicationSummary;
@@ -355,6 +514,7 @@ export class AudioMixerController {
     #masterMute;
     #masterSlider;
     #outputDevice;
+    #outputDeviceSelector;
     #pendingCommands = new Map();
     #requestCommand;
     #rows = new Map();
@@ -368,6 +528,9 @@ export class AudioMixerController {
         masterPercentage,
         masterSlider,
         outputDevice,
+        outputDeviceList,
+        outputDeviceMenu,
+        outputDeviceTrigger,
         template
     }) {
         this.#applicationList = applicationList;
@@ -375,6 +538,12 @@ export class AudioMixerController {
         this.#emptyState = emptyState;
         this.#outputDevice = outputDevice;
         this.#template = template;
+        this.#outputDeviceSelector = new OutputDeviceSelectorController(
+            outputDeviceTrigger,
+            outputDevice,
+            outputDeviceMenu,
+            outputDeviceList,
+            request => this.#send(request));
         this.#masterSlider = new VolumeSliderController(
             masterSlider,
             masterPercentage,
@@ -406,13 +575,14 @@ export class AudioMixerController {
         const masterAvailable = connected && this.#outputDevice.dataset.available === "true";
         this.#masterSlider.setEnabled(masterAvailable);
         this.#masterMute.setEnabled(masterAvailable);
+        this.#outputDeviceSelector.setConnected(connected);
         this.#rows.forEach(row => row.setConnected(connected));
     }
 
     setAudioState(state) {
-        const output = state?.isAvailable === true ? state.outputDevice : null;
+        const output = state?.outputDevice || null;
+        this.#outputDeviceSelector.setAudioState(state);
         this.#outputDevice.dataset.available = output ? "true" : "false";
-        this.#outputDevice.textContent = output?.friendlyName || "No output device available";
         this.#masterSlider.setAuthoritative(output?.volume ?? 0);
         this.#masterMute.setAuthoritative(output?.isMuted === true);
         this.#masterSlider.setEnabled(this.#connected && output !== null);
@@ -462,6 +632,10 @@ export class AudioMixerController {
         }
 
         return pending;
+    }
+
+    requestCommand(request) {
+        this.#send(request);
     }
 
     #send(request) {

@@ -11,10 +11,22 @@ public sealed class AudioStateNormalizer
         AudioMixerSnapshot? snapshot,
         DateTimeOffset lastUpdatedUtc)
     {
-        if (snapshot?.OutputDevice is null ||
-            string.IsNullOrWhiteSpace(snapshot.OutputDevice.DeviceId))
+        if (snapshot is null)
         {
             return AudioState.Unavailable(lastUpdatedUtc);
+        }
+
+        var outputDevices = NormalizeOutputDevices(snapshot);
+        if (snapshot.OutputDevice is null ||
+            string.IsNullOrWhiteSpace(snapshot.OutputDevice.DeviceId))
+        {
+            return new AudioState(
+                false,
+                null,
+                outputDevices,
+                [],
+                0,
+                lastUpdatedUtc);
         }
 
         var output = new AudioOutputDeviceState(
@@ -34,8 +46,68 @@ public sealed class AudioStateNormalizer
             .ThenBy(application => application.ApplicationId, StringComparer.Ordinal)
             .ToArray();
 
-        return new AudioState(true, output, applications, 0, lastUpdatedUtc);
+        return new AudioState(
+            true,
+            output,
+            outputDevices,
+            applications,
+            0,
+            lastUpdatedUtc);
     }
+
+    private static IReadOnlyList<AudioOutputDeviceDescriptorState> NormalizeOutputDevices(
+        AudioMixerSnapshot snapshot)
+    {
+        var candidates = snapshot.OutputDevices ?? [];
+        var devices = candidates
+            .Where(device => !string.IsNullOrWhiteSpace(device.DeviceId))
+            .GroupBy(device => device.DeviceId!.Trim(), StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var device = group.First();
+                return new AudioOutputDeviceDescriptorState(
+                    group.Key,
+                    NormalizeText(device.FriendlyName) ?? "Unknown output device",
+                    NormalizeDeviceState(device.State),
+                    group.Any(candidate => candidate.IsDefault));
+            })
+            .ToList();
+
+        if (snapshot.OutputDevice is { } output &&
+            !string.IsNullOrWhiteSpace(output.DeviceId))
+        {
+            var outputId = output.DeviceId.Trim();
+            var index = devices.FindIndex(device =>
+                string.Equals(device.DeviceId, outputId, StringComparison.Ordinal));
+            if (index >= 0)
+            {
+                devices[index] = devices[index] with { IsDefault = true };
+            }
+            else
+            {
+                devices.Add(new AudioOutputDeviceDescriptorState(
+                    outputId,
+                    NormalizeText(output.FriendlyName) ?? "Unknown output device",
+                    AudioOutputDeviceStates.Active,
+                    true));
+            }
+        }
+
+        return devices
+            .OrderByDescending(device => device.IsDefault)
+            .ThenBy(device => device.FriendlyName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(device => device.DeviceId, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string NormalizeDeviceState(AudioOutputDeviceStatus state) => state switch
+    {
+        AudioOutputDeviceStatus.Active => AudioOutputDeviceStates.Active,
+        AudioOutputDeviceStatus.Disabled => AudioOutputDeviceStates.Disabled,
+        AudioOutputDeviceStatus.NotPresent => AudioOutputDeviceStates.NotPresent,
+        AudioOutputDeviceStatus.Unplugged => AudioOutputDeviceStates.Unplugged,
+        _ => AudioOutputDeviceStates.Unknown
+    };
 
     private static ApplicationAudioState NormalizeGroup(
         string groupKey,

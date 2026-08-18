@@ -66,6 +66,8 @@ class NowPlayingComponent {
         this.#playPauseButton = root.querySelector('[data-media-role="play-pause"]');
         this.#playPauseIcon = root.querySelector('[data-media-role="play-pause-icon"]');
         this.#nextButton = root.querySelector('[data-media-role="next"]');
+        this.accessoryRoot = root.querySelector('[data-media-role="accessory"]');
+        this.accessoryRoot.hidden = false;
 
         this.#artwork.addEventListener("error", () => {
             if (this.#artwork.dataset.requestedArtwork === this.#artwork.getAttribute("src")) {
@@ -225,10 +227,30 @@ export class NowPlayingController {
 
         this.compactRoot = compactRoot;
         this.expandedRoot = expandedRoot;
-        this.#components = [
-            new NowPlayingComponent(compactRoot, "compact", template, handleCommand),
-            new NowPlayingComponent(expandedRoot, "expanded", template, handleCommand)
-        ];
+        const compactComponent = new NowPlayingComponent(
+            compactRoot,
+            "compact",
+            template,
+            handleCommand);
+        const expandedComponent = new NowPlayingComponent(
+            expandedRoot,
+            "expanded",
+            template,
+            handleCommand);
+        this.compactSpotifyAccessoryRoot = document.createElement("div");
+        this.compactSpotifyAccessoryRoot.className = "spotify-accessory-slot spotify-accessory-slot-compact";
+        this.compactSpotifyAccessoryRoot.hidden = true;
+        compactComponent.accessoryRoot.append(this.compactSpotifyAccessoryRoot);
+        this.expandedSpotifyAccessoryRoot = document.createElement("div");
+        this.expandedSpotifyAccessoryRoot.className = "spotify-accessory-slot spotify-accessory-slot-expanded";
+        this.expandedSpotifyAccessoryRoot.hidden = true;
+        this.expandedAudioAccessoryRoot = document.createElement("div");
+        this.expandedAudioAccessoryRoot.className = "audio-accessory-slot";
+        this.expandedAudioAccessoryRoot.hidden = true;
+        expandedComponent.accessoryRoot.append(
+            this.expandedSpotifyAccessoryRoot,
+            this.expandedAudioAccessoryRoot);
+        this.#components = [compactComponent, expandedComponent];
     }
 
     bindCommands(callback) {

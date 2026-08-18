@@ -88,7 +88,30 @@
                             <div class="audio-master-copy">
                                 <p class="eyebrow">Master output</p>
                                 <h2 id="audio-workspace-title">System audio</h2>
-                                <p id="audio-output-device" class="audio-output-device">Waiting for output device</p>
+                                <div class="audio-output-selector">
+                                    <button
+                                        id="audio-output-trigger"
+                                        class="audio-output-trigger"
+                                        type="button"
+                                        aria-controls="audio-output-menu"
+                                        aria-expanded="false"
+                                        disabled>
+                                        <span class="audio-output-trigger-label">Output</span>
+                                        <strong id="audio-output-device">Waiting for output device</strong>
+                                        <span class="audio-output-chevron" aria-hidden="true">&#9662;</span>
+                                    </button>
+                                    <section
+                                        id="audio-output-menu"
+                                        class="audio-output-menu"
+                                        aria-label="Available audio outputs"
+                                        hidden>
+                                        <header>
+                                            <strong>Output</strong>
+                                            <span>Select a Windows playback device</span>
+                                        </header>
+                                        <div id="audio-output-list" class="audio-output-list" role="listbox"></div>
+                                    </section>
+                                </div>
                             </div>
                             <div class="audio-master-controls">
                                 <label class="audio-slider-field audio-slider-field-master">
@@ -143,15 +166,24 @@
                             </p>
                         </div>
 
-                        <section id="context-action-area" class="context-action-area" aria-labelledby="context-actions-heading">
-                            <div class="section-heading">
-                                <div>
-                                    <p class="eyebrow">Available now</p>
-                                    <h3 id="context-actions-heading">Quick actions</h3>
+                        <div class="context-side-stack">
+                            <section
+                                id="context-audio-capabilities"
+                                class="context-audio-capabilities"
+                                aria-label="Context audio controls"
+                                hidden>
+                            </section>
+
+                            <section id="context-action-area" class="context-action-area" aria-labelledby="context-actions-heading">
+                                <div class="section-heading">
+                                    <div>
+                                        <p class="eyebrow">Available now</p>
+                                        <h3 id="context-actions-heading">Quick actions</h3>
+                                    </div>
                                 </div>
-                            </div>
-                            <div id="context-action-grid" class="context-action-grid"></div>
-                        </section>
+                                <div id="context-action-grid" class="context-action-grid"></div>
+                            </section>
+                        </div>
                     </section>
                 </section>
 
@@ -297,7 +329,46 @@
                         <span aria-hidden="true">&#x23ED;</span>
                     </button>
                 </div>
+
+                <section
+                    class="now-playing-accessory"
+                    data-media-role="accessory"
+                    aria-label="Related audio controls"
+                    hidden>
+                </section>
             </div>
+        </article>
+    </template>
+
+    <template id="context-volume-template">
+        <article class="context-volume-row">
+            <span class="audio-activity-indicator" aria-hidden="true"></span>
+            <div class="context-volume-identity">
+                <span data-context-audio-role="role">Audio</span>
+                <strong data-context-audio-role="name">Application</strong>
+            </div>
+            <label class="audio-slider-field">
+                <span class="visually-hidden" data-context-audio-role="slider-label">Application volume</span>
+                <input
+                    class="audio-volume-slider"
+                    data-context-audio-role="volume"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value="0"
+                    step="1"
+                    disabled>
+            </label>
+            <output class="audio-volume-percentage" data-context-audio-role="percentage">--%</output>
+            <button
+                class="audio-mute-button context-volume-mute"
+                data-context-audio-role="mute"
+                type="button"
+                aria-pressed="false"
+                disabled>
+                <span class="audio-mute-icon" aria-hidden="true">&#128266;</span>
+                <span class="audio-mute-label">Mute</span>
+            </button>
         </article>
     </template>
 
@@ -340,6 +411,6 @@
         <span>Ctrl+Shift+D to close</span>
     </aside>
 
-    <script type="module" src="/js/dashboard.js"></script>
+    <script type="module" src="/js/dashboard.js?v=13"></script>
 </body>
 </html>

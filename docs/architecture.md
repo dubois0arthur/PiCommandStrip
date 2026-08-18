@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture through the touchscreen Windows audio mixer, context-aware workspace, and local media-artwork support. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 8 adds typed master/application volume and mute commands while retaining authentication, foreground monitoring, context selection, media controls/artwork, reconnection, command security, and LAN boundaries.
+This document describes the architecture through the optional Spotify enrichment layer, touchscreen Windows audio mixer and output selector, context-aware workspace, and local media-artwork support. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 10 adds Spotify-only library/shuffle/repeat state while retaining generic Windows media authority, authentication, reconnection, command security, and LAN boundaries.
 
 ## System shape
 
@@ -20,6 +20,10 @@ Windows PC
 |  Windows media manager --> media service --> media store --------|
 |                                  |                               |
 |                                  +--> artwork cache --> HTTP -----|
+|                                                                  |
+|  optional Spotify Web API --> Spotify service/store -------------|
+|             ^                                                    |
+|             +-- encrypted host refresh credential                |
 |                                                                  |
 |  Windows Core Audio --> audio mixer service --> audio store ------|
 |                                                                  |
@@ -89,17 +93,32 @@ The Windows API may expose Spotify, packaged media players, and browser tabs suc
 
 Media is a parallel global signal, not an input to the current foreground-process resolver. Every authenticated client receives it regardless of active context. Playback alone cannot force Media context: Spotify remains Media only when Spotify is foreground through the existing mapping, and a foreground browser remains Browser / Research while browser media is playing.
 
+### Optional Spotify enrichment service
+
+- `ISpotifyService` is an optional application seam for Spotify-only data and mutations. `IMediaSessionService` remains the source of title, artist, artwork, progress, transport capabilities, and play/pause/previous/next.
+- `SpotifyService` does no work when disabled and calls the Web API only while the current Windows media source explicitly identifies Spotify. It reads playback at a ten-second active cadence and refreshes saved state/queue only when the item changes or after thirty seconds. Spotify rate limits and failures use slower retry timing.
+- A Spotify response applies to the visible media only when the generic source is Spotify and normalized titles match exactly. The browser never performs this join and never receives the Spotify item URI. Ambiguous or non-Spotify media gets no Spotify controls.
+- `SpotifyStateStore` and per-connection comparison suppress timestamp-only duplicates. A new authenticated client receives the retained `spotify_state`; other clients receive meaningful changes only.
+- Server-side Authorization Code flow is exposed through loopback-only `/spotify/auth/start` and `/spotify/auth/callback`. A random, one-use, ten-minute OAuth state protects the callback. The redirect uses an explicit loopback IP because Spotify no longer accepts `localhost` aliases.
+- Client ID, client secret, and redirect configuration remain in Windows host configuration. The access token exists only in host memory. The refresh token is encrypted with ASP.NET Core Data Protection and stored under the Windows user's Local Application Data `PiCommandStrip` folder, outside the repository. No Spotify credential is sent to the Pi or logged.
+- The client secret is required because PiCommandStrip is a confidential Windows-host application. No third-party OAuth package is needed: ASP.NET Core Data Protection, `HttpClient`, and `System.Text.Json` cover the narrow flow and REST contracts.
+- The allowlisted `spotify.setSaved`, `spotify.setShuffle`, and `spotify.setRepeat` handlers call only `ISpotifyService`. The service re-checks the confident current-item match and device restriction before every mutation. Failures return fixed browser-safe text and do not touch generic media state.
+
+The minimum scopes are `user-read-playback-state` (current item, device, queue, shuffle/repeat), `user-modify-playback-state` (shuffle/repeat mutations), `user-library-read` (saved status), and `user-library-modify` (save/remove). Generic Windows media sessions remain fully functional when Spotify is disabled, unauthenticated, unavailable, expired, or rate-limited.
+
 ### Windows audio-mixer service
 
 - `IAudioMixerService` exposes the latest platform-neutral `AudioState`; protocol and future UI code do not depend on NAudio or COM types.
-- `WindowsAudioMixerService` is the only PiCommandStrip component that imports `NAudio.CoreAudioApi`. It owns the default multimedia render endpoint, endpoint-volume object, audio-session manager, and per-session event registrations.
+- `WindowsAudioMixerService` is the only PiCommandStrip component that imports `NAudio.CoreAudioApi`. It owns active render-endpoint enumeration, the default multimedia endpoint, endpoint-volume object, audio-session manager, and per-session event registrations.
 - `NAudio.Wasapi` 2.3.0 is the single application package used for classic Windows Core Audio COM projection. PiCommandStrip uses only device/session discovery, identity/state, `IAudioEndpointVolume`, `ISimpleAudioVolume`, and notifications—never capture, playback, codecs, DSP, or routing.
 - Endpoint volume notifications and per-session volume, mute, display-name, state, and disconnect notifications request immediate refreshes. Session-created notifications request reconciliation. Callback threads only signal the service; state reads and resource changes remain serialized in the background loop.
-- A two-second fallback check detects default-output changes and recovers missed state events. A fifteen-second full reconciliation catches missed creation/removal notifications without high-frequency session enumeration.
+- A two-second fallback check refreshes active playback devices, detects default-output and hot-plug changes, and recovers missed state events. A fifteen-second full reconciliation catches missed session creation/removal notifications without high-frequency enumeration.
 - Every session wrapper and event registration is explicitly detached/disposed when its session expires, the default device changes, or the host stops. Individual COM/session failures are caught and omitted from that observation rather than terminating PiCommandStrip.
 - `AudioStateNormalizer` clamps and rounds scalar volumes, removes only explicit Windows system-sounds and expired sessions, groups safe application peers, and produces deterministic ordering/identifiers. Missing process or display metadata remains a visible `Unknown audio session` entry.
 - `AudioStateStore` assigns a monotonically increasing in-process revision only to meaningful changes. Timestamp-only observations and sub-0.001 volume noise do not broadcast.
-- Volume/mute operations enter a single-reader command queue owned by `WindowsAudioMixerService`. WebSocket threads never access the mutable COM wrappers or session dictionary directly. The service resolves an application ID against a fresh normalized observation, applies the operation to each still-live underlying session, and observes once more before broadcasting authoritative state.
+- Volume, mute, and output-selection operations enter a single-reader command queue owned by `WindowsAudioMixerService`. WebSocket threads never access mutable COM wrappers or the session dictionary directly. The service resolves application/device IDs against a fresh normalized observation and observes once more before broadcasting authoritative state.
+- `IDefaultAudioOutputDeviceSwitcher` isolates the only unsupported Windows detail. Windows publicly documents endpoint enumeration/default observation but does not publish a desktop API for setting the system default. `WindowsDefaultAudioOutputDeviceSwitcher` therefore uses the private PolicyConfig COM interface used by established desktop switchers, sets Console and Multimedia roles, and leaves Communications unchanged. The adapter is best-effort on the project's Windows 10 2004+ target and may require maintenance if Microsoft changes that private interface.
+- After a device-selection attempt, the worker pauses later queued mixer mutations, disposes the old endpoint/session wrappers, resolves the new default, rebuilds master/session state, and only then continues. A device that vanishes between validation and PolicyConfig becomes a fixed failed result; the browser never receives the COM error.
 - Stale application IDs, lost output devices, and sessions disappearing during a grouped update return fixed failed results. COM details are logged locally and never copied into browser result text.
 
 Media and audio remain separate even when both describe Spotify or a browser. A media session answers “what is playing?” and follows the one session Windows considers current; it contains title, artist, artwork, timeline, and transport capabilities. An audio session answers “which render streams exist on this output?” and contains endpoint, volume, mute, process, and activity state. There may be many audio sessions for one media application, and many audio sessions with no media metadata at all.
@@ -113,16 +132,16 @@ Application grouping uses the following priority:
 
 One `ApplicationAudioState` therefore carries a stable hashed `ApplicationId`, zero or more process IDs, user-facing metadata, aggregate state, session count, mixed-volume/mute flags, and the underlying session-instance IDs retained only on the server. The displayed volume is the maximum member volume so an audible member is not hidden; displayed mute is true only when every member is muted. Audio commands resolve the application ID back to every current underlying session and set them together. Raw session identifiers—which can contain implementation details—are not serialized to the browser.
 
-Peak level is deliberately omitted from version 8. Core Audio exposes inexpensive meters, but a useful meter requires frequent sampling and would conflict with change-only WebSocket state. It can be added later as a separately paced signal if the physical mixer UI demonstrates that need.
+Peak level is deliberately omitted from version 10. Core Audio exposes inexpensive meters, but a useful meter requires frequent sampling and would conflict with change-only WebSocket state. It can be added later as a separately paced signal if the physical mixer UI demonstrates that need.
 
 ### State and connection coordinator
 
-- Retains the latest foreground, context, media, and audio states so a newly authenticated dashboard receives all four immediate snapshots.
+- Retains the latest foreground, context, media, audio, and optional Spotify states so a newly authenticated dashboard receives immediate snapshots.
 - Tracks active WebSocket connections needed for broadcasting.
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
 
-The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, media, and audio snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
+The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, media, audio, and Spotify snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
 
 ### WebSocket endpoint and protocol
 
@@ -133,7 +152,7 @@ The implementation separates the latest-state stores from a `ConcurrentDictionar
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 8 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, and `audio_state` snapshots. Later foreground changes can update the first two, manual selection updates `context_state` independently, and Windows media/audio events update their own state independently.
+The implemented version 10 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, `audio_state`, and `spotify_state` snapshots. Spotify state is enrichment only; Windows media/audio events continue to update independently.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -146,7 +165,7 @@ A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-dup
 - Produces a structured success or failure result suitable for display and logging.
 - Applies the configured command cooldown (750 ms by default) independently to ordinary commands on each WebSocket connection. Continuously coalesced audio volume commands use a separate 40 ms safety gate.
 
-The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, or arbitrary argument list. Registered identifiers are `open_notepad`, the six `media.*` controls, and `audio.setMasterVolume`, `audio.setMasterMute`, `audio.setApplicationVolume`, and `audio.setApplicationMute`. Notepad still uses its narrow launcher. Media handlers operate only through `IMediaSessionService`; audio handlers operate only through `IAudioMixerService`. Audio volumes are finite normalized scalars and application IDs must resolve to a current entry. Adding any other command still requires a server code change and review.
+The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, or arbitrary argument list. Registered identifiers are `open_notepad`, the six `media.*` controls, five `audio.*` controls, and `spotify.setSaved`, `spotify.setShuffle`, and `spotify.setRepeat`. Notepad still uses its narrow launcher. Media handlers operate only through `IMediaSessionService`; audio handlers only through `IAudioMixerService`; Spotify handlers only through `ISpotifyService`. Spotify payloads are one Boolean or one fixed repeat-state value and cannot carry tokens, URIs, endpoints, or arbitrary input. Adding any other command still requires a server code change and review.
 
 `IPcCommandDispatcher` and `IPcCommandHandler` provide test seams. Handler failures are caught at the dispatcher boundary and converted to fixed browser-safe text; exception types may be logged, but exception messages and stack traces are not sent to the dashboard.
 
@@ -155,17 +174,19 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Uses repository-local plain HTML, CSS, and JavaScript.
 - Uses three stable shell regions at the 1024x600 target: a 64-pixel status header, a flexible dynamic workspace, and a 68-pixel navigation row. The document itself does not scroll at the target viewport.
 - Keeps active context, foreground process, connection/authentication state, measured round-trip latency, and local time in the compact header. Foreground process is supporting evidence rather than workspace content; its window title remains available as a tooltip and PID/context age move to diagnostics.
-- Chooses the workspace presentation from existing context and media state. Media is expanded for Media context and for Default when no more valuable capability exists. Browser-owned media is expanded in Browser / Research; other contexts retain their own workspace with compact media below it.
-- Treats browser media ownership conservatively: a recognizable source application is preferred, with foreground-window/media-title matching as a fallback for browsers that publish an opaque Windows AppUserModelId.
+- Builds a small presentation policy from the existing context, foreground, media, and audio snapshots. Media is expanded for Media context and for Default when no more valuable capability exists. Browser-owned media is expanded in Browser / Research; Gaming composes a priority mixer with compact media; other contexts retain their own workspace with compact media below it.
+- Matches capabilities conservatively in `capability-matching.js`: exact normalized process/source identity comes first, then a short explicit family map for Spotify, Firefox, Chrome, Edge, and Discord. Browser foreground-window/media-title equality is the only fallback for an opaque Windows media source. Display names are never fuzzy-matched, and multiple possible audio entries produce no inline control.
 - Provides a reusable compact touch-action grid for context-owned commands. The current production grid contains only a System Details entry; prototype Notepad and manual latency actions no longer consume primary workspace area. Their server command/diagnostic behavior remains available without weakening the allowlist.
 - Uses compact bottom navigation for Home/Automatic, Media, Audio, and More/System. Audio pins the existing Audio context and includes the current master percentage as a small global entry point. The context header and More button open the same diagnostics sheet, which contains manual context selection and technical details.
 - Connects to the WebSocket endpoint and displays connecting, connected, disconnected, and retrying states.
 - Renders one reusable Now Playing template/controller in two hosts: expanded as the primary workspace when media has the highest value, and compact beneath another context's higher-value workspace. Both variants receive the same normalized state, command callback, capability logic, artwork fallback, seek logic, and progress baseline. Keeping paused sessions visible preserves the user's path to resume playback.
 - Shows prominent square-cropped artwork in Media context and a small compact thumbnail only when available. A deliberate local fallback occupies the expanded artwork region; text remains on an opaque surface so extreme artwork brightness cannot reduce readability.
 - Displays generic media title, artist when available, source application, capability-aware transport controls, current/total time, and a touch-friendly seek range without assuming every item is music.
-- Renders a dedicated Audio workspace with one compact master-output section and an internally scrolling application list. Active sessions sort first; inactive sessions remain available without receiving oversized cards. The document header and navigation never scroll.
-- Uses one `AudioMixerController`, reusable row controllers, and one volume-slider coordinator for both master and application sliders. Slider thumbs update immediately, samples are coalesced to at most one send every 160 ms, and release schedules one final value after the short server safety gap.
+- Mounts the same compact Spotify accessory in both Now Playing variants only when server state confidently applies. Like, shuffle, and repeat are primary; an expanded queue overlay and current device label are secondary. These commands are independent from generic media buttons, so API latency cannot delay Windows transport controls.
+- Renders a dedicated Audio workspace with one compact master-output section and an internally scrolling application list. The current output name is a touch button that opens an overlaid, internally bounded endpoint selector, so the list consumes no permanent mixer height. Active sessions sort first; inactive sessions remain available without receiving oversized cards. The document header and navigation never scroll.
+- Uses one `AudioMixerController` command path plus exported reusable volume/mute controllers for the full Audio page and context-composed rows. Slider thumbs update immediately, samples are coalesced to at most one send every 160 ms, and release schedules one final value after the short server safety gap.
 - Keeps authoritative Windows values separate from the local value under the user's finger. Incoming audio state updates metadata immediately but cannot move an actively dragged thumb. A matching post-command state clears the optimistic value; failures or a short reconciliation timeout restore the latest authoritative value.
+- Keeps output selection authoritative as well: tapping an endpoint immediately shows `Switching…`, but the check mark and current name change only when a later `audio_state` marks that endpoint as default. Failure restores the previous label and uses the existing accessible error feedback. The compact Audio navigation item remains the uncluttered global entry point rather than duplicating an endpoint list outside the Audio page.
 - Advances the displayed playing position locally with `requestAnimationFrame` from the latest server baseline. Five-second server refreshes correct drift; pausing or a new state resets the baseline.
 - Populates the diagnostics context selector from the server catalog. Home sends the existing automatic-selection request, Media pins the existing Media context, and the diagnostics selector can pin any catalog context.
 - Sends only a fixed command identifier selected by a known UI control, plus a generated request ID for correlation.
@@ -174,11 +195,13 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Prompts for the pre-shared token and retains it only in browser `sessionStorage`; it is not part of the frontend source.
 - Uses a 1024x600 landscape layout with large touch targets and no hover dependency.
 - Uses a restrained cyberdeck telemetry theme built from local CSS, system fonts, low-contrast gradients, and a subtle grid. Optional media-session artwork is fetched only from the same PiCommandStrip host; there is no external image, font, CDN, or animation dependency.
-- Provides a developer layout overlay through `?layoutDebug=1` or `Ctrl+Shift+D`; the overlay reports the CSS viewport and device-pixel ratio without changing protocol behavior. On loopback only, `layoutFixture=no-media`, `layoutFixture=long-media`, and `layoutFixture=audio` can be combined with `layoutDebug=1` to inspect otherwise transient layouts without altering server state or protocol messages.
+- Provides a developer layout overlay through `?layoutDebug=1` or `Ctrl+Shift+D`; the overlay reports the CSS viewport and device-pixel ratio without changing protocol behavior. Loopback-only fixtures cover no/long media, the full Audio page, Media, Default with/without media, Browser-owned/foreign media, and Gaming composition without altering server state or protocol messages.
 
-The dynamic workspace remains the extension seam for future capabilities. Audio supplies master/device/application controls inside the existing shell, and compact media still composes beneath it. A future Gaming view can therefore reuse a smaller audio subset without duplicating the header, navigation, feedback, or media systems.
+The dynamic workspace remains the extension seam for future capabilities. `context-composition.js` is a presentation policy and view coordinator, not a second state store: it derives which existing capabilities to show, mounts contextual volume rows into either the workspace or expanded Now Playing accessory slot, and delegates every mutation to the same `AudioMixerController`. The full Audio destination remains the complete mixer. Removing an audio entry disposes its interaction controller immediately, while server-side application-ID revalidation still protects a command already in flight.
 
-The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, `ui.js` owns the overall shell, `now-playing.js` owns reusable media rendering, and `audio-mixer.js` owns mixer rows plus optimistic/coalesced slider interaction. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
+The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, `ui.js` owns the overall shell, `capability-matching.js` owns strict cross-signal identity rules, `context-composition.js` owns context presentation policy, `now-playing.js` owns reusable media rendering, `spotify-controls.js` owns optional Spotify controls/queue presentation, and `audio-mixer.js` owns the shared optimistic/coalesced volume interaction. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
+
+Repository-local module URLs share one manually advanced frontend version token. This is intentionally simpler than adding a build pipeline and prevents a long-lived Pi browser cache from combining incompatible HTML or JavaScript modules after an update.
 
 Client-side fixed buttons improve usability, but they are not a security boundary. The server must validate every message and enforce its own allowlist because browser traffic can be modified.
 
@@ -212,14 +235,15 @@ The finalized, direction-specific UTF-8 JSON envelopes and payload examples are 
 
 ### Audio state
 
-1. The hosted audio service opens Windows' default multimedia render endpoint through `MMDeviceEnumerator` and reads stable device ID, friendly name, master scalar volume, and master mute.
+1. The hosted audio service uses `MMDeviceEnumerator` to enumerate active render endpoints and identify the Multimedia default. Endpoint IDs remain opaque stable identifiers; the default endpoint also supplies master scalar volume and mute.
 2. Its audio-session manager enumerates current render sessions and registers session-created notifications. Each usable control registers an `IAudioSessionEventsHandler` for external volume/mute, metadata, state, and disconnect changes.
 3. Each refresh reads independent raw `AudioSessionSnapshot` values. A process lookup is best-effort; failures retain the session with its other Windows metadata.
 4. The normalizer filters only explicit system-sounds and expired controls, groups sessions using process/group/session identity, and converts them into deterministic application entries. Raw identity remains server-side for grouped multi-session control.
-5. The store compares device, aggregate application values, membership, and ordering. A meaningful change increments `revision`, retains the new timestamp, and broadcasts `audio_state`; an identical observation does nothing.
+5. The store compares endpoint inventory/default flags, master state, aggregate application values, membership, and ordering. A meaningful change increments `revision`, retains the new timestamp, and broadcasts `audio_state`; an identical observation does nothing.
 6. Authentication sends the retained audio state after foreground, context, and media state. Audio remains available to every context and does not influence context resolution.
 7. Default-device polling and slow full reconciliation complement Windows events. They are recovery mechanisms, not level-meter polling.
-8. An audio command is queued back onto this same service loop. Its application ID is resolved against the fresh normalized observation, the operation is applied to the available member controls, and a post-operation observation becomes the next authoritative `audio_state`.
+8. An audio command is queued back onto this same service loop. Application IDs are resolved against the fresh normalized observation before the operation is applied to available member controls.
+9. Output selection likewise requires an exact active device ID. The isolated PolicyConfig adapter asks Windows to set Console and Multimedia defaults, then the service reopens the new default and rebuilds master/session state before processing later queued mixer changes. The resulting `audio_state`, not the command result alone, is authoritative.
 
 ### Context selection
 
@@ -236,7 +260,7 @@ Pins are intentionally in-memory and server-wide for this single-user, shared-to
 ### Command round trip
 
 1. The user presses a known dashboard button.
-2. JavaScript creates a unique request ID and sends a `command_request` containing its fixed command ID and only that command's typed fields. Media seek carries a non-negative integer position; audio commands carry a normalized volume or Boolean mute state, plus a server-generated application ID where required.
+2. JavaScript creates a unique request ID and sends a `command_request` containing its fixed command ID and only that command's typed fields. Media seek carries a non-negative integer position; mixer commands carry a normalized volume or Boolean mute state plus a server-generated application ID where required; output selection carries only an endpoint ID received from `audio_state`.
 3. The endpoint checks message size, JSON shape, message type, and required fields.
 4. The dispatcher looks up the command ID in its explicit allowlist. Media handlers invoke only `IMediaSessionService`; audio handlers invoke only `IAudioMixerService`.
 5. If absent, the dispatcher returns a rejected result and executes nothing.
@@ -264,6 +288,7 @@ The first automated tests should focus on behavior that can run without an inter
 - foreground changes publish once while duplicate samples do not;
 - configured process mappings resolve to the expected profile and unknown processes fall back to Default;
 - automatic context changes, manual pinning, and returning to automatic mode preserve the expected state;
+- frontend matching accepts exact process/source identity and explicit application families, rejects non-unique mixer candidates, and promotes Browser media only with confident foreground ownership;
 - incomplete media metadata normalizes safely, positions are bounded, and reported capabilities are preserved;
 - timestamp-only media refreshes are suppressed while meaningful metadata, playback, position, and active/inactive changes are retained;
 - audio sessions group deterministically by safe identity while duplicate process sessions map to one application entry;
@@ -282,7 +307,7 @@ The real Win32 foreground adapter, WinRT media adapter, and Core Audio/NAudio ad
 
 The app and tests target `net10.0-windows10.0.19041.0`. On modern .NET, that Windows-specific target framework makes the SDK supply the Windows SDK reference/projection assets required to consume inbox WinRT APIs such as `Windows.Media.Control`; `Microsoft.Windows.SDK.Contracts`, `Microsoft.Windows.CsWinRT`, and Windows App SDK are not application dependencies. Foreground interop continues to use built-in .NET P/Invoke.
 
-Core Audio application sessions are classic COM APIs rather than WinRT and are not supplied as convenient .NET SDK projections. The application therefore references only stable `NAudio.Wasapi` 2.3.0 (which brings its small `NAudio.Core` dependency) instead of maintaining local COM vtables, marshaling declarations, callback implementations, and release logic. The broad `NAudio` metapackage and NAudio 3 preview are not used.
+Core Audio application sessions are classic COM APIs rather than WinRT and are not supplied as convenient .NET SDK projections. The application therefore references only stable `NAudio.Wasapi` 2.3.0 (which brings its small `NAudio.Core` dependency) for endpoint/session enumeration, callbacks, volume, and release logic. The broad `NAudio` metapackage and NAudio 3 preview are not used. NAudio intentionally does not expose a system-default setter because Windows has no public one; the small PolicyConfig vtable needed solely for that operation is maintained in one isolated adapter and documented as an unsupported compatibility risk.
 
 The installed stable .NET SDK is pinned with `global.json`. The test project uses `Microsoft.NET.Test.Sdk` to host test execution, `xunit` for the test API and assertions, and `xunit.runner.visualstudio` for test discovery through the .NET and Visual Studio test platform.
 

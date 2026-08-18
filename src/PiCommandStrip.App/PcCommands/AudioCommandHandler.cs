@@ -32,6 +32,8 @@ public sealed class AudioCommandHandler(
                     invocation.ApplicationId,
                     invocation.IsMuted,
                     cancellationToken),
+            PcCommandIds.AudioSetOutputDevice =>
+                await SetOutputDeviceAsync(invocation.DeviceId, cancellationToken),
             _ => AudioMixerCommandResult.Failure("The audio command is not supported.")
         };
 
@@ -99,4 +101,12 @@ public sealed class AudioCommandHandler(
 
     private static bool IsValidApplicationId(string? applicationId) =>
         AudioMixerTargetResolver.IsValidApplicationId(applicationId);
+
+    private Task<AudioMixerCommandResult> SetOutputDeviceAsync(
+        string? deviceId,
+        CancellationToken cancellationToken) =>
+        AudioOutputDeviceTargetResolver.IsValidDeviceIdShape(deviceId)
+            ? audioMixerService.SetOutputDeviceAsync(deviceId!, cancellationToken)
+            : Task.FromResult(AudioMixerCommandResult.Failure(
+                "The requested output device is invalid."));
 }

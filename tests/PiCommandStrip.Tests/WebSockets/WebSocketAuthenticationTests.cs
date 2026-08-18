@@ -10,6 +10,7 @@ using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
+using PiCommandStrip.App.Spotify;
 using PiCommandStrip.App.WebSockets;
 
 namespace PiCommandStrip.Tests.WebSockets;
@@ -33,6 +34,7 @@ public sealed class WebSocketAuthenticationTests
         Assert.Contains(MessageTypes.ContextState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.MediaState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.AudioState, fixture.Socket.SentMessageTypes);
+        Assert.Contains(MessageTypes.SpotifyState, fixture.Socket.SentMessageTypes);
     }
 
     [Fact]
@@ -173,6 +175,7 @@ public sealed class WebSocketAuthenticationTests
             contextCatalog,
             new StubMediaSessionService(timeProvider),
             new StubAudioMixerService(timeProvider),
+            new StubSpotifyService(timeProvider),
             commandDispatcher,
             new ClientAuthenticationService(ValidToken, timeProvider),
             new AuthenticationAttemptLimiter(timeProvider),
@@ -311,6 +314,11 @@ public sealed class WebSocketAuthenticationTests
             CancellationToken cancellationToken) =>
             NotAvailable(cancellationToken);
 
+        public Task<AudioMixerCommandResult> SetOutputDeviceAsync(
+            string deviceId,
+            CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
         private static Task<AudioMixerCommandResult> NotAvailable(
             CancellationToken cancellationToken)
         {
@@ -337,6 +345,26 @@ public sealed class WebSocketAuthenticationTests
             LastCommandId = invocation.CommandId;
             LastPositionMilliseconds = invocation.PositionMilliseconds;
             return Task.FromResult(PcCommandExecutionResult.Success("Command completed."));
+        }
+    }
+
+    private sealed class StubSpotifyService(TimeProvider timeProvider) : ISpotifyService
+    {
+        public SpotifyState Current { get; } = SpotifyState.Unconfigured(timeProvider.GetUtcNow());
+
+        public Task<SpotifyCommandResult> SetSavedAsync(bool isSaved, CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<SpotifyCommandResult> SetShuffleAsync(bool enabled, CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        public Task<SpotifyCommandResult> SetRepeatAsync(string repeatState, CancellationToken cancellationToken) =>
+            NotAvailable(cancellationToken);
+
+        private static Task<SpotifyCommandResult> NotAvailable(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(SpotifyCommandResult.Failure("Spotify is not configured."));
         }
     }
 

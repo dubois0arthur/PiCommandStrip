@@ -5,4 +5,8 @@ public sealed record PcCommandInvocation(
     long? PositionMilliseconds = null,
     string? ApplicationId = null,
     float? Volume = null,
-    bool? IsMuted = null);
+    bool? IsMuted = null,
+    string? DeviceId = null,
+    bool? IsSaved = null,
+    bool? ShuffleEnabled = null,
+    string? RepeatState = null);

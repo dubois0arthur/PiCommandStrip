@@ -35,6 +35,11 @@ public sealed class AudioMixerTargetResolverTests
         new(
             true,
             new AudioOutputDeviceState("device", "Speakers", 0.5f, false),
+            [new AudioOutputDeviceDescriptorState(
+                "device",
+                "Speakers",
+                AudioOutputDeviceStates.Active,
+                true)],
             applications,
             1,
             DateTimeOffset.UtcNow);

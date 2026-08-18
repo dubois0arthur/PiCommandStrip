@@ -139,6 +139,53 @@ public sealed class AudioStateNormalizerTests
             second.Applications[0].ApplicationId);
     }
 
+    [Fact]
+    public void Normalize_OutputDevices_UsesStableIdsAndMarksDefaultFirst()
+    {
+        var snapshot = new AudioMixerSnapshot(
+            OutputDevice(),
+            [],
+            [
+                new AudioOutputDeviceDescriptorSnapshot(
+                    "headphones",
+                    " Headphones ",
+                    AudioOutputDeviceStatus.Active,
+                    false),
+                new AudioOutputDeviceDescriptorSnapshot(
+                    "device-1",
+                    "Speakers",
+                    AudioOutputDeviceStatus.Active,
+                    true)
+            ]);
+
+        var state = _normalizer.Normalize(snapshot, UpdatedAt);
+
+        Assert.Equal(2, state.OutputDevices.Count);
+        Assert.Equal("device-1", state.OutputDevices[0].DeviceId);
+        Assert.True(state.OutputDevices[0].IsDefault);
+        Assert.Equal("Headphones", state.OutputDevices[1].FriendlyName);
+        Assert.Equal(AudioOutputDeviceStates.Active, state.OutputDevices[1].State);
+    }
+
+    [Fact]
+    public void Normalize_NoDefaultOutput_PreservesSelectableDeviceInventory()
+    {
+        var snapshot = new AudioMixerSnapshot(
+            null,
+            [],
+            [new AudioOutputDeviceDescriptorSnapshot(
+                "usb-dac",
+                "USB DAC",
+                AudioOutputDeviceStatus.Active,
+                false)]);
+
+        var state = _normalizer.Normalize(snapshot, UpdatedAt);
+
+        Assert.False(state.IsAvailable);
+        Assert.Null(state.OutputDevice);
+        Assert.Equal("usb-dac", Assert.Single(state.OutputDevices).DeviceId);
+    }
+
     private static AudioOutputDeviceSnapshot OutputDevice() =>
         new("device-1", "Speakers", 0.65f, false);
 

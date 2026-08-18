@@ -1,5 +1,6 @@
 using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.MediaSessions;
+using PiCommandStrip.App.Spotify;
 
 namespace PiCommandStrip.App.PcCommands;
 
@@ -49,6 +50,22 @@ public static class PcCommandServiceExtensions
             new AudioCommandHandler(
                 PcCommandIds.AudioSetApplicationMute,
                 services.GetRequiredService<IAudioMixerService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new AudioCommandHandler(
+                PcCommandIds.AudioSetOutputDevice,
+                services.GetRequiredService<IAudioMixerService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new SpotifyCommandHandler(
+                PcCommandIds.SpotifySetSaved,
+                services.GetRequiredService<ISpotifyService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new SpotifyCommandHandler(
+                PcCommandIds.SpotifySetShuffle,
+                services.GetRequiredService<ISpotifyService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new SpotifyCommandHandler(
+                PcCommandIds.SpotifySetRepeat,
+                services.GetRequiredService<ISpotifyService>()));
         services.AddSingleton<IPcCommandDispatcher, PcCommandDispatcher>();
 
         return services;

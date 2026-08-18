@@ -7,6 +7,8 @@ public static class AudioMixerServiceExtensions
     {
         services.AddSingleton<AudioStateNormalizer>();
         services.AddSingleton<AudioStateStore>();
+        services.AddSingleton<IDefaultAudioOutputDeviceSwitcher,
+            WindowsDefaultAudioOutputDeviceSwitcher>();
         services.AddSingleton<WindowsAudioMixerService>();
         services.AddSingleton<IAudioMixerService>(services =>
             services.GetRequiredService<WindowsAudioMixerService>());

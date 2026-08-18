@@ -44,9 +44,34 @@ public sealed record MediaStatePayload(
     DateTimeOffset LastUpdatedUtc,
     string? ArtworkUrl);
 
+public sealed record SpotifyStatePayload(
+    string Status,
+    bool IsConfigured,
+    bool IsAuthenticated,
+    bool AppliesToCurrentMedia,
+    string? ItemType,
+    bool? IsSaved,
+    bool? ShuffleEnabled,
+    string? RepeatState,
+    SpotifyDevicePayload? Device,
+    IReadOnlyList<SpotifyQueueItemPayload> Queue,
+    DateTimeOffset LastUpdatedUtc,
+    DateTimeOffset? RetryAfterUtc);
+
+public sealed record SpotifyDevicePayload(
+    string Name,
+    string Type,
+    bool IsRestricted);
+
+public sealed record SpotifyQueueItemPayload(
+    string Title,
+    string? Subtitle,
+    string ItemType);
+
 public sealed record AudioStatePayload(
     bool IsAvailable,
     AudioOutputDevicePayload? OutputDevice,
+    IReadOnlyList<AudioOutputDeviceDescriptorPayload> OutputDevices,
     IReadOnlyList<ApplicationAudioPayload> Applications,
     long Revision,
     DateTimeOffset LastUpdatedUtc);
@@ -56,6 +81,12 @@ public sealed record AudioOutputDevicePayload(
     string FriendlyName,
     float Volume,
     bool IsMuted);
+
+public sealed record AudioOutputDeviceDescriptorPayload(
+    string DeviceId,
+    string FriendlyName,
+    string State,
+    bool IsDefault);
 
 public sealed record ApplicationAudioPayload(
     string ApplicationId,
@@ -96,7 +127,11 @@ public sealed record CommandRequestPayload(
     long? PositionMilliseconds = null,
     string? ApplicationId = null,
     float? Volume = null,
-    bool? IsMuted = null);
+    bool? IsMuted = null,
+    string? DeviceId = null,
+    bool? IsSaved = null,
+    bool? ShuffleEnabled = null,
+    string? RepeatState = null);
 
 public sealed record ContextSelectionRequestPayload(string Mode, string? ContextId);
 

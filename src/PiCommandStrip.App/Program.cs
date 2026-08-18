@@ -7,6 +7,7 @@ using PiCommandStrip.App.Health;
 using PiCommandStrip.App.Hosting;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
+using PiCommandStrip.App.Spotify;
 using PiCommandStrip.App.WebSockets;
 
 var contentRootPath = ContentRootPathResolver.Resolve(
@@ -17,6 +18,21 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     Args = args,
     ContentRootPath = contentRootPath
 });
+
+// This single-user Windows host also needs its repository-external secrets in the
+// named Lan environment. Re-adding environment/command-line providers preserves
+// their normal precedence over User Secrets.
+if (!builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddUserSecrets(
+        typeof(PiCommandStripOptions).Assembly,
+        optional: true);
+    builder.Configuration.AddEnvironmentVariables();
+    if (args.Length > 0)
+    {
+        builder.Configuration.AddCommandLine(args);
+    }
+}
 
 var piCommandStripOptions = builder.Configuration
     .GetRequiredSection("PiCommandStrip")
@@ -39,6 +55,7 @@ builder.Services.AddSingleton(new ClientAuthenticationService(
     timeProvider));
 builder.Services.AddSingleton<AuthenticationAttemptLimiter>();
 builder.Services.AddSingleton<HealthResponseFactory>();
+builder.Services.AddSpotifyIntegration(piCommandStripOptions.Spotify, networkOptions.Port);
 builder.Services.AddPcCommands();
 builder.Services.AddPiCommandStripWebSockets(commandCooldown);
 builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
@@ -47,6 +64,13 @@ builder.Services.AddWindowsMediaSessionMonitoring();
 builder.Services.AddWindowsAudioMixerMonitoring();
 
 var app = builder.Build();
+var spotifyConfiguration = app.Services.GetRequiredService<SpotifyConfiguration>();
+if (spotifyConfiguration.Enabled && !spotifyConfiguration.IsConfigured)
+{
+    app.Logger.LogWarning(
+        "Spotify enrichment is disabled by incomplete configuration: {SpotifyConfigurationIssue}",
+        spotifyConfiguration.ConfigurationIssue);
+}
 
 app.Lifetime.ApplicationStarted.Register(() =>
     app.Logger.LogInformation(
@@ -64,6 +88,7 @@ app.UseWebSockets(new WebSocketOptions
 app.MapGet("/health", (HealthResponseFactory healthResponseFactory) =>
     Results.Ok(healthResponseFactory.Create()));
 app.MapMediaArtwork();
+app.MapSpotifyOAuth();
 app.MapPiCommandStripWebSocket();
 
 app.Run();

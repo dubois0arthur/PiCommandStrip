@@ -13,4 +13,8 @@ public static class PcCommandIds
     public const string AudioSetMasterMute = "audio.setMasterMute";
     public const string AudioSetApplicationVolume = "audio.setApplicationVolume";
     public const string AudioSetApplicationMute = "audio.setApplicationMute";
+    public const string AudioSetOutputDevice = "audio.setOutputDevice";
+    public const string SpotifySetSaved = "spotify.setSaved";
+    public const string SpotifySetShuffle = "spotify.setShuffle";
+    public const string SpotifySetRepeat = "spotify.setRepeat";
 }

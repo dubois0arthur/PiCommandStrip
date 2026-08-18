@@ -6,6 +6,7 @@ using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
+using PiCommandStrip.App.Spotify;
 
 namespace PiCommandStrip.App.WebSockets;
 
@@ -21,6 +22,7 @@ public sealed class WebSocketClientConnection(
     private ContextState? _lastSentContextState;
     private MediaState? _lastSentMediaState;
     private AudioState? _lastSentAudioState;
+    private SpotifyState? _lastSentSpotifyState;
     private int _isAuthenticated;
     private int _isReadyForBroadcasts;
 
@@ -62,6 +64,7 @@ public sealed class WebSocketClientConnection(
         ContextStateCoordinator contextStateCoordinator,
         IMediaSessionService mediaSessionService,
         IAudioMixerService audioMixerService,
+        ISpotifyService spotifyService,
         ServerMessageFactory messageFactory,
         CancellationToken cancellationToken)
     {
@@ -81,6 +84,10 @@ public sealed class WebSocketClientConnection(
                 cancellationToken);
             await SendAudioStateCoreAsync(
                 audioMixerService.Current,
+                messageFactory,
+                cancellationToken);
+            await SendSpotifyStateCoreAsync(
+                spotifyService.Current,
                 messageFactory,
                 cancellationToken);
         }
@@ -171,6 +178,28 @@ public sealed class WebSocketClientConnection(
         try
         {
             await SendAudioStateCoreAsync(state, messageFactory, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public async Task SendSpotifyStateAsync(
+        SpotifyState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (!IsReadyForBroadcasts)
+        {
+            return;
+        }
+
+        await _sendLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            await SendSpotifyStateCoreAsync(state, messageFactory, cancellationToken);
         }
         finally
         {
@@ -299,9 +328,17 @@ public sealed class WebSocketClientConnection(
                 application.HasMixedVolume,
                 application.HasMixedMute))
             .ToArray();
+        var outputDevices = state.OutputDevices
+            .Select(device => new AudioOutputDeviceDescriptorPayload(
+                device.DeviceId,
+                device.FriendlyName,
+                device.State,
+                device.IsDefault))
+            .ToArray();
         var payload = new AudioStatePayload(
             state.IsAvailable,
             outputDevice,
+            outputDevices,
             applications,
             state.Revision,
             state.LastUpdatedUtc);
@@ -310,6 +347,48 @@ public sealed class WebSocketClientConnection(
             messageFactory.Create(MessageTypes.AudioState, payload),
             cancellationToken);
         _lastSentAudioState = state;
+    }
+
+    private async Task SendSpotifyStateCoreAsync(
+        SpotifyState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (_lastSentSpotifyState is not null && _lastSentSpotifyState.HasSameMeaningAs(state))
+        {
+            return;
+        }
+
+        var device = state.Device is null
+            ? null
+            : new SpotifyDevicePayload(
+                state.Device.Name,
+                state.Device.Type,
+                state.Device.IsRestricted);
+        var queue = state.Queue
+            .Select(item => new SpotifyQueueItemPayload(
+                item.Title,
+                item.Subtitle,
+                item.ItemType))
+            .ToArray();
+        var payload = new SpotifyStatePayload(
+            state.Status,
+            state.IsConfigured,
+            state.IsAuthenticated,
+            state.AppliesToCurrentMedia,
+            state.ItemType,
+            state.IsSaved,
+            state.ShuffleEnabled,
+            state.RepeatState,
+            device,
+            queue,
+            state.LastUpdatedUtc,
+            state.RetryAfterUtc);
+
+        await SendCoreAsync(
+            messageFactory.Create(MessageTypes.SpotifyState, payload),
+            cancellationToken);
+        _lastSentSpotifyState = state;
     }
 
     private async Task SendCoreAsync<TPayload>(

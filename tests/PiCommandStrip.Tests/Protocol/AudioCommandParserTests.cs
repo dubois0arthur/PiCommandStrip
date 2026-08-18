@@ -72,6 +72,36 @@ public sealed class AudioCommandParserTests
         Assert.Equal("invalid_payload", result.Error?.Code);
     }
 
+    [Fact]
+    public void Parse_OutputDevice_ReturnsOpaqueBoundedIdentifier()
+    {
+        const string deviceId = "{0.0.0.00000000}.{fixture-endpoint}";
+
+        var result = _parser.Parse(Envelope(new
+        {
+            commandId = PcCommandIds.AudioSetOutputDevice,
+            deviceId
+        }));
+
+        var message = Assert.IsType<CommandRequestMessage>(result.Message);
+        Assert.Equal(deviceId, message.Payload.DeviceId);
+        Assert.Null(message.Payload.ApplicationId);
+    }
+
+    [Fact]
+    public void Parse_OutputDeviceWithExecutablePathProperty_IsRejected()
+    {
+        var result = _parser.Parse(Envelope(new
+        {
+            commandId = PcCommandIds.AudioSetOutputDevice,
+            deviceId = "known-id",
+            executablePath = "not-accepted.exe"
+        }));
+
+        Assert.False(result.IsValid);
+        Assert.Equal("invalid_payload", result.Error?.Code);
+    }
+
     private static byte[] Envelope(object payload) =>
         JsonSerializer.SerializeToUtf8Bytes(new
         {
