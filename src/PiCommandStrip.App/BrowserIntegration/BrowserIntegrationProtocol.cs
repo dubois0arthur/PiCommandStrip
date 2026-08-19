@@ -5,7 +5,7 @@ namespace PiCommandStrip.App.BrowserIntegration;
 
 public static class BrowserIntegrationProtocol
 {
-    public const string Version = "2";
+    public const string Version = "3";
     public const int MaximumMessageSizeBytes = 8 * 1024;
     public const string HelloType = "browser_hello";
     public const string StateUpdateType = "browser_state_update";

@@ -2,6 +2,7 @@ using PiCommandStrip.App.AudioMixer;
 using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.Spotify;
+using PiCommandStrip.App.ResearchInbox;
 
 namespace PiCommandStrip.App.PcCommands;
 
@@ -74,6 +75,18 @@ public static class PcCommandServiceExtensions
                     commandId,
                     services.GetRequiredService<IBrowserCommandService>()));
         }
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new ResearchInboxCommandHandler(
+                PcCommandIds.ResearchSaveCurrent,
+                services.GetRequiredService<IResearchInboxService>(),
+                services.GetRequiredService<IBrowserIntegrationService>(),
+                services.GetRequiredService<IBrowserCommandService>()));
+        services.AddSingleton<IPcCommandHandler>(services =>
+            new ResearchInboxCommandHandler(
+                PcCommandIds.ResearchOpenItem,
+                services.GetRequiredService<IResearchInboxService>(),
+                services.GetRequiredService<IBrowserIntegrationService>(),
+                services.GetRequiredService<IBrowserCommandService>()));
         services.AddSingleton<IPcCommandDispatcher, PcCommandDispatcher>();
 
         return services;

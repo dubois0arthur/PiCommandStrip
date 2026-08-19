@@ -319,6 +319,40 @@ public sealed class ClientMessageParser
                 new CommandRequestPayload(commandId, SearchActionId: searchActionId)));
         }
 
+        if (commandId == PcCommandIds.ResearchOpenItem)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "researchItemId") ||
+                !TryGetRequiredInt64(payload, "researchItemId", out var researchItemId) ||
+                researchItemId <= 0)
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'{commandId}' requires only 'commandId' and a positive integer 'researchItemId'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, ResearchItemId: researchItemId)));
+        }
+
+        if (commandId == PcCommandIds.ResearchSaveCurrent)
+        {
+            if (!HasExactlyOneProperty(payload, "commandId"))
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'{commandId}' accepts no additional payload.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId)));
+        }
+
         if (PcCommandIds.BrowserCommands.Contains(commandId, StringComparer.Ordinal))
         {
             if (!HasExactlyOneProperty(payload, "commandId"))

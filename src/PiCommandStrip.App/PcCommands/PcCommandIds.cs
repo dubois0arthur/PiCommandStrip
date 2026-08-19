@@ -25,6 +25,8 @@ public static class PcCommandIds
     public const string BrowserReopenClosedTab = "browser.reopenClosedTab";
     public const string BrowserCopyCurrentUrl = "browser.copyCurrentUrl";
     public const string BrowserSearchSelection = "browser.searchSelection";
+    public const string ResearchSaveCurrent = "research.saveCurrent";
+    public const string ResearchOpenItem = "research.openItem";
 
     public static IReadOnlyList<string> BrowserCommands { get; } =
     [

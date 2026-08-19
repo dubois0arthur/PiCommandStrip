@@ -83,7 +83,13 @@
                                 <h2 id="research-title">Firefox context</h2>
                                 <p id="research-domain">Waiting for browser integration</p>
                             </div>
-                            <span id="research-integration-status" class="research-integration-status">Bridge offline</span>
+                            <div class="research-summary-actions">
+                                <span id="research-integration-status" class="research-integration-status">Bridge offline</span>
+                                <button id="research-save" class="research-save" type="button" disabled>
+                                    <span aria-hidden="true">＋</span>
+                                    <strong>Save</strong>
+                                </button>
+                            </div>
                         </header>
 
                         <section class="research-page-actions" aria-label="Current browser tab actions">
@@ -105,6 +111,26 @@
                                 aria-label="Browser audio controls"
                                 hidden>
                             </section>
+                        </div>
+                    </section>
+
+                    <section id="research-inbox-workspace" class="research-inbox-workspace" aria-labelledby="research-inbox-title" hidden>
+                        <header class="research-inbox-heading">
+                            <div>
+                                <p class="eyebrow">Research</p>
+                                <h2 id="research-inbox-title">Inbox</h2>
+                            </div>
+                            <button id="research-inbox-close" class="research-inbox-close" type="button">Done</button>
+                        </header>
+                        <div class="research-inbox-layout">
+                            <section class="research-inbox-list-panel" aria-label="Saved research items">
+                                <div id="research-inbox-list" class="research-inbox-list"></div>
+                                <p id="research-inbox-empty" class="research-inbox-empty">No saved research yet.</p>
+                                <button id="research-inbox-more" class="research-inbox-more" type="button" hidden>Load older</button>
+                            </section>
+                            <article id="research-inbox-detail" class="research-inbox-detail" aria-live="polite">
+                                <p class="research-inbox-detail-placeholder">Select a saved page to review it.</p>
+                            </article>
                         </div>
                     </section>
 
@@ -282,6 +308,14 @@
             </select>
         </label>
 
+        <button id="research-inbox-open" class="diagnostic-feature-action" type="button">
+            <span aria-hidden="true">▤</span>
+            <span>
+                <strong>Research Inbox</strong>
+                <small><span id="research-inbox-count">0</span> waiting to review</small>
+            </span>
+        </button>
+
         <dl class="diagnostic-grid">
             <div>
                 <dt>Foreground PID</dt>
@@ -443,6 +477,6 @@
         <span>Ctrl+Shift+D to close</span>
     </aside>
 
-    <script type="module" src="/js/dashboard.js?v=16"></script>
+    <script type="module" src="/js/dashboard.js?v=17"></script>
 </body>
 </html>

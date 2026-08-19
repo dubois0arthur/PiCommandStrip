@@ -1,5 +1,6 @@
-import { DashboardSocket } from "./protocol.js?v=16";
-import { dashboardUi } from "./ui.js?v=16";
+import { DashboardSocket } from "./protocol.js?v=17";
+import { ResearchInboxApi } from "./research-inbox.js?v=17";
+import { dashboardUi } from "./ui.js?v=17";
 
 const automaticPingIntervalMilliseconds = 10000;
 const tokenStorageKey = "pi-command-strip-token";
@@ -342,6 +343,10 @@ const dashboardSocket = new DashboardSocket({
         dashboardUi.renderBrowserState(applyBrowserFixture(state));
     },
 
+    onResearchInboxState(state) {
+        dashboardUi.renderResearchInboxState(state);
+    },
+
     onContextSelectionResult(result) {
         dashboardUi.showContextSelectionResult(result);
     },
@@ -365,6 +370,8 @@ const dashboardSocket = new DashboardSocket({
             dashboardUi.showSpotifyCommandResult(result);
         } else if (result.commandId.startsWith("browser.")) {
             dashboardUi.showBrowserCommandResult(result);
+        } else if (result.commandId.startsWith("research.")) {
+            dashboardUi.showResearchCommandResult(result);
         }
     },
 
@@ -411,8 +418,28 @@ dashboardUi.bindSpotifyControls(request => dashboardSocket.sendSpotifyCommand(
     request));
 
 dashboardUi.bindBrowserControls(request => {
-    if (dashboardSocket.sendBrowserCommand(request.commandId, request)) {
-        dashboardUi.setBrowserCommandPending(request.commandId);
+    const sent = request.commandId.startsWith("research.")
+        ? dashboardSocket.sendResearchCommand(request.commandId, request)
+        : dashboardSocket.sendBrowserCommand(request.commandId, request);
+    if (sent) {
+        if (request.commandId.startsWith("research.")) {
+            dashboardUi.setResearchCommandPending(request.commandId);
+        } else {
+            dashboardUi.setBrowserCommandPending(request.commandId);
+        }
+    }
+});
+
+const researchInboxApi = new ResearchInboxApi(readStoredToken);
+dashboardUi.bindResearchInbox({
+    getPage: beforeId => researchInboxApi.getPage(beforeId),
+    getItem: id => researchInboxApi.getItem(id),
+    setReviewed: (id, isReviewed) => researchInboxApi.setReviewed(id, isReviewed),
+    deleteItem: id => researchInboxApi.deleteItem(id),
+    openItem(id) {
+        if (dashboardSocket.sendResearchCommand("research.openItem", { researchItemId: id })) {
+            dashboardUi.setResearchCommandPending("research.openItem");
+        }
     }
 });
 

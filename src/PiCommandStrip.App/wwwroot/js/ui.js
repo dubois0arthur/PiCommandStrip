@@ -1,11 +1,12 @@
-import { AudioMixerController } from "./audio-mixer.js?v=16";
+import { AudioMixerController } from "./audio-mixer.js?v=17";
 import {
     buildContextComposition,
     ContextCompositionController
-} from "./context-composition.js?v=16";
-import { NowPlayingController } from "./now-playing.js?v=16";
-import { ResearchWorkspaceController } from "./research-workspace.js?v=16";
-import { SpotifyControlsController } from "./spotify-controls.js?v=16";
+} from "./context-composition.js?v=17";
+import { NowPlayingController } from "./now-playing.js?v=17";
+import { ResearchInboxController } from "./research-inbox.js?v=17";
+import { ResearchWorkspaceController } from "./research-workspace.js?v=17";
+import { SpotifyControlsController } from "./spotify-controls.js?v=17";
 
 const elements = {
     activityAnnouncer: document.querySelector("#activity-announcer"),
@@ -65,12 +66,21 @@ const elements = {
     researchAudioCapabilities: document.querySelector("#research-audio-capabilities"),
     researchDomain: document.querySelector("#research-domain"),
     researchIntegrationStatus: document.querySelector("#research-integration-status"),
+    researchSave: document.querySelector("#research-save"),
     researchPageActionGrid: document.querySelector("#research-page-action-grid"),
     researchSearchActionGrid: document.querySelector("#research-search-action-grid"),
     researchSelectionPanel: document.querySelector("#research-selection-panel"),
     researchSelectionPreview: document.querySelector("#research-selection-preview"),
     researchTitle: document.querySelector("#research-title"),
     researchWorkspace: document.querySelector("#research-workspace"),
+    researchInboxWorkspace: document.querySelector("#research-inbox-workspace"),
+    researchInboxList: document.querySelector("#research-inbox-list"),
+    researchInboxEmpty: document.querySelector("#research-inbox-empty"),
+    researchInboxMore: document.querySelector("#research-inbox-more"),
+    researchInboxDetail: document.querySelector("#research-inbox-detail"),
+    researchInboxClose: document.querySelector("#research-inbox-close"),
+    researchInboxOpen: document.querySelector("#research-inbox-open"),
+    researchInboxCount: document.querySelector("#research-inbox-count"),
     viewportDimensions: document.querySelector("#viewport-dimensions"),
     workspace: document.querySelector("#workspace"),
     workspaceDescription: document.querySelector("#workspace-description"),
@@ -116,7 +126,18 @@ const researchWorkspace = new ResearchWorkspaceController({
     pageActionGrid: elements.researchPageActionGrid,
     selectionPanel: elements.researchSelectionPanel,
     selectionPreview: elements.researchSelectionPreview,
-    searchActionGrid: elements.researchSearchActionGrid
+    searchActionGrid: elements.researchSearchActionGrid,
+    saveButton: elements.researchSave
+});
+const researchInbox = new ResearchInboxController({
+    root: elements.researchInboxWorkspace,
+    list: elements.researchInboxList,
+    empty: elements.researchInboxEmpty,
+    more: elements.researchInboxMore,
+    detail: elements.researchInboxDetail,
+    close: elements.researchInboxClose,
+    openButton: elements.researchInboxOpen,
+    count: elements.researchInboxCount
 });
 
 let connected = false;
@@ -141,6 +162,7 @@ let latestBrowserState;
 let layoutDebugEnabled = false;
 let manualPingPending = false;
 let mediaCommandPending = false;
+let researchInboxOpen = false;
 
 function setActionState(button, state) {
     if (state) {
@@ -162,6 +184,7 @@ function updateControlStates() {
     elements.navMedia.disabled = !connected || contextSelectionPending;
     elements.navAudio.disabled = !connected || contextSelectionPending;
     elements.pingButton.disabled = !connected || manualPingPending;
+    elements.researchInboxOpen.disabled = !connected;
 }
 
 function formatElapsed(timestamp) {
@@ -333,7 +356,7 @@ function renderWorkspace() {
         mediaState: latestMediaState,
         audioState: latestAudioState
     });
-    const presentation = connected ? composition.mediaPresentation : "hidden";
+    const presentation = connected && !researchInboxOpen ? composition.mediaPresentation : "hidden";
     const audioActive = latestContextState.contextId === "audio";
     const researchActive = latestContextState.contextId === "browser";
     elements.appShell.dataset.context = latestContextState.contextId || "default";
@@ -342,9 +365,10 @@ function renderWorkspace() {
     elements.contextWorkspace.dataset.mode = composition.workspaceMode;
     nowPlaying.setPresentation(presentation);
     contextComposition.render(composition);
-    elements.audioWorkspace.hidden = !audioActive;
-    elements.researchWorkspace.hidden = !researchActive;
-    elements.contextWorkspace.hidden = presentation === "expanded" || audioActive || researchActive;
+    elements.audioWorkspace.hidden = researchInboxOpen || !audioActive;
+    elements.researchWorkspace.hidden = researchInboxOpen || !researchActive;
+    elements.researchInboxWorkspace.hidden = !researchInboxOpen;
+    elements.contextWorkspace.hidden = researchInboxOpen || presentation === "expanded" || audioActive || researchActive;
     workspaceContent(composition);
 }
 
@@ -355,11 +379,11 @@ function updateNavigationState() {
     elements.navHome.dataset.active = automatic ? "true" : "false";
     elements.navMedia.dataset.active = mediaPinned ? "true" : "false";
     elements.navAudio.dataset.active = audioPinned ? "true" : "false";
-    elements.navMore.dataset.active = diagnosticsOpen ? "true" : "false";
+    elements.navMore.dataset.active = diagnosticsOpen || researchInboxOpen ? "true" : "false";
     elements.navHome.setAttribute("aria-pressed", automatic ? "true" : "false");
     elements.navMedia.setAttribute("aria-pressed", mediaPinned ? "true" : "false");
     elements.navAudio.setAttribute("aria-pressed", audioPinned ? "true" : "false");
-    elements.navMore.setAttribute("aria-pressed", diagnosticsOpen ? "true" : "false");
+    elements.navMore.setAttribute("aria-pressed", diagnosticsOpen || researchInboxOpen ? "true" : "false");
 }
 
 function setDiagnosticsOpen(open, focusContextSelection = false) {
@@ -435,6 +459,21 @@ export const dashboardUi = {
 
     bindBrowserControls(callback) {
         researchWorkspace.bindCommands(callback);
+    },
+
+    bindResearchInbox(actions) {
+        researchInbox.bindActions({
+            ...actions,
+            onOpenChanged(open) {
+                researchInboxOpen = open;
+                if (open) setDiagnosticsOpen(false);
+                renderWorkspace();
+                updateNavigationState();
+            },
+            showFeedback(message, tone) {
+                showFeedback(message, tone, tone === "failure" ? 7000 : 2400);
+            }
+        });
     },
 
     bindPing(callback) {
@@ -530,6 +569,10 @@ export const dashboardUi = {
         renderWorkspace();
     },
 
+    renderResearchInboxState(state) {
+        researchInbox.setState(state);
+    },
+
     setProtocolVersion(version) {
         elements.diagnosticProtocol.textContent = `WebSocket v${version}`;
     },
@@ -620,6 +663,22 @@ export const dashboardUi = {
             result.message,
             result.succeeded ? "success" : "failure",
             result.succeeded ? 2200 : 7000);
+        elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
+    },
+
+    setResearchCommandPending(commandId) {
+        if (commandId === "research.saveCurrent") {
+            researchWorkspace.setPending(commandId);
+            showFeedback("Saving to Research Inbox…", "neutral", 0);
+        }
+    },
+
+    showResearchCommandResult(result) {
+        researchWorkspace.clearPending();
+        showFeedback(
+            result.message,
+            result.succeeded ? "success" : "failure",
+            result.succeeded ? 2600 : 7000);
         elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
     },
 

@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture through the optional Spotify enrichment layer, touchscreen Windows audio mixer and output selector, context-aware Research workspace, local media-artwork support, and Firefox browser bridge. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 12 adds constrained browser research actions and selected-text preview while retaining generic Windows media authority, authentication, reconnection, command security, and LAN boundaries.
+This document describes the architecture through the optional Spotify enrichment layer, touchscreen Windows audio mixer and output selector, context-aware Research workspace, local Research Inbox, local media-artwork support, and Firefox browser bridge. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 13 adds explicit Research Inbox capture/open commands and lightweight inbox invalidation while retaining generic Windows media authority, authentication, reconnection, command security, and LAN boundaries.
 
 ## System shape
 
@@ -28,6 +28,9 @@ Windows PC
 |  Windows Core Audio --> audio mixer service --> audio store ------|
 |                                                                  |
 |  Firefox extension -- loopback-only bridge --> browser store -----|
+|                                                                  |
+|  explicit Research capture --> inbox service --> local SQLite ----+--> authenticated HTTP
+|                                              +--> change counts --+--> WebSocket
 |                                                                  |
 |  fixed command allowlist <--> command dispatcher ----------------|
 +------------------------------------------------------------------+
@@ -130,9 +133,9 @@ Media and audio remain separate even when both describe Spotify or a browser. A 
 - `IBrowserIntegrationService` exposes normalized browser state without making context, protocol, or frontend code depend on WebExtension details.
 - A separate Kestrel listener is added only when browser integration is enabled. It uses `ListenLocalhost` on the configured bridge port (5078 by default). `/browser-integration/ws` additionally verifies loopback local/remote addresses, the exact listener port, and a WebExtension origin (`moz-extension://`, with `chrome-extension://` reserved for a future producer); the route returns `404` through the dashboard/LAN listener.
 - The bridge has its own 32-byte Base64 pairing token and failed-authentication limiter. It does not accept the Pi token, and the extension never receives the Pi token. Pairing timestamps are fresh-only and tokens are compared in constant time.
-- The bridge protocol is independently versioned at `2`. Extension-to-host messages are limited to exact `browser_hello`, `browser_state_update`, and `browser_command_result` shapes with an 8 KiB receive limit. The host can send only a typed `browser_command`; one channel-level send lock prevents command/error sends from overlapping on a socket.
+- The bridge protocol is independently versioned at `3`. Extension-to-host messages are limited to exact `browser_hello`, `browser_state_update`, and `browser_command_result` shapes with an 8 KiB receive limit. The host can send only a typed `browser_command`; one channel-level send lock prevents command/error sends from overlapping on a socket.
 - `BrowserStateNormalizer` accepts only HTTP/HTTPS URLs, removes URI user information and fragments, derives an IDN-normalized hostname, and bounds title/URL/selection fields. Selected-text truncation avoids leaving an unmatched UTF-16 high surrogate.
-- Selected text is never logged or persisted. Protocol version 12 sends it only to authenticated Pi clients while Browser context is active, where `research-workspace.js` normalizes whitespace and limits its rendered preview to 180 characters.
+- Selected text is never logged or persisted merely because browser state changed. Protocol version 13 sends it only to authenticated Pi clients while Browser context is active, where `research-workspace.js` normalizes whitespace and limits its rendered preview to 180 characters. Persistence occurs only through the explicit Save command described below.
 - `BrowserIntegrationService` serializes connection/update/disconnect transitions. The newest authenticated Firefox instance becomes authoritative, and an old socket cannot clear newer state when it eventually disconnects.
 - `BrowserStateStore` suppresses timestamp-only/duplicate changes. Connect, meaningful tab/title/URL/selection changes, and disconnect are broadcast to authenticated Pi clients; disconnect clears all tab and selection data.
 - `IBrowserCommandService` is the only PC-command handler dependency for `browser.*`. It checks live connection/tab/capability/selection state, constructs searches through `BrowserSearchCatalog`, and delegates a fixed extension command through `IBrowserIntegrationService`.
@@ -142,6 +145,18 @@ Media and audio remain separate even when both describe Spotify or a browser. A 
 Foreground-window detection and context resolution remain unchanged. Foreground Firefox still selects Browser / Research through process configuration; browser state only enriches that workspace. If the extension is disabled, unpaired, asleep, or disconnected, Browser context and every existing media/audio feature continue to work.
 
 The Firefox extension uses Manifest V3 `background.scripts`, `tabs`, `storage`, `sessions`, `clipboardWrite`, and top-frame HTTP/HTTPS content scripts. It observes active-tab, Navigation API, and selection events rather than polling. Navigation capabilities remain nullable on restricted/unsupported pages and unknown is disabled. The bridge remains a small Firefox adapter, not a plugin framework.
+
+### Local Research Inbox
+
+- `IResearchInboxService` is the application boundary for explicit capture, bounded recent queries, detail lookup, review state, and deletion. The browser integration publishes state but does not depend on or write to this service.
+- `ResearchInboxCommandHandler` is the only component that joins the two: when `research.saveCurrent` is explicitly invoked, it reads that instant's normalized browser state and passes a `ResearchCapture` to the inbox. There is no browser-state subscription or implicit persistence path.
+- The implementation uses `Microsoft.Data.Sqlite` directly through ADO.NET, without Entity Framework or an ORM. The database is `%LOCALAPPDATA%\PiCommandStrip\research-inbox.v1.db` on the Windows host. WAL mode and serialized short operations provide atomic local persistence appropriate for hundreds or thousands of items.
+- SQLite was chosen over JSON because unique indexes, transactions, cursor paging, and later filtering/export do not require loading and rewriting the full collection. The existing protected Spotify JSON store remains appropriate for one credential record but is not a collection store.
+- Only absolute HTTP/HTTPS URLs without credentials are accepted. Normalization lowercases the scheme/IDN host, removes default ports and fragments, and preserves path/query. The original safe absolute URL and normalized URL are stored; no filesystem path is exposed.
+- A unique `(normalized_url, selection_key)` index defines deduplication. Page-only captures use one fixed key. Selected text is trimmed, line endings are normalized, capped at 1,000 characters, and SHA-256 hashed for the key. Re-saving the same page with the same normalized passage returns the existing item unchanged; a different passage creates another item. Page-only and passage captures are distinct.
+- The schema includes nullable `tags_json`, `notes`, `content_type`, and `export_state` columns as a modest migration-free export seam, but the current model/UI does not implement tags, notes, classification, search, or export. A future exporter can consume bounded `IResearchInboxService` queries without coupling browser capture to Obsidian or another destination.
+- Content is not broadcast. `research_inbox_state` contains only revision, total/unreviewed counts, change type, and changed ID. The authenticated same-origin HTTP API returns at most 50 summaries per exclusive ID cursor and fetches selected text only for one requested detail. API responses are `no-store` and use the existing dashboard bearer token.
+- Opening an item accepts only its integer store ID from the Pi. The host resolves and revalidates its URI, then uses the isolated browser command service and the fixed internal `research.openSavedUrl` bridge command. Firefox accepts only a bounded credential-free HTTP/HTTPS URL from its paired Windows host; no shell or generic Pi-supplied URL is involved.
 
 Application grouping uses the following priority:
 
@@ -156,12 +171,12 @@ Peak level is deliberately omitted from the current protocol. Core Audio exposes
 
 ### State and connection coordinator
 
-- Retains the latest foreground, context, media, audio, optional Spotify, and optional browser states so a newly authenticated dashboard receives immediate snapshots.
+- Retains the latest foreground, context, media, audio, optional Spotify, optional browser, and lightweight Research Inbox states so a newly authenticated dashboard receives immediate snapshots.
 - Tracks active WebSocket connections needed for broadcasting.
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
 
-The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, media, audio, and Spotify snapshots. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
+The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, media, audio, Spotify, browser, and inbox revisions. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
 
 ### WebSocket endpoint and protocol
 
@@ -172,7 +187,7 @@ The implementation separates the latest-state stores from a `ConcurrentDictionar
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 12 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, `audio_state`, `spotify_state`, and `browser_state` snapshots. Spotify and browser state are enrichment only; Windows foreground/media/audio events continue to update independently.
+The implemented version 13 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, `audio_state`, `spotify_state`, `browser_state`, and `research_inbox_state` snapshots. Spotify and browser state are enrichment only; Windows foreground/media/audio events continue to update independently.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -185,7 +200,7 @@ A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-dup
 - Produces a structured success or failure result suitable for display and logging.
 - Applies the configured command cooldown (750 ms by default) independently to ordinary commands on each WebSocket connection. Continuously coalesced audio volume commands use a separate 40 ms safety gate.
 
-The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, arbitrary URL, or arbitrary argument list. Registered identifiers are `open_notepad`, the six `media.*` controls, five `audio.*` controls, three Spotify controls, and eight fixed `browser.*` actions. Notepad still uses its narrow launcher. Media handlers operate only through `IMediaSessionService`; audio handlers only through `IAudioMixerService`; Spotify handlers only through `ISpotifyService`; browser handlers only through `IBrowserCommandService`. The only browser payload value is a safe configured search-provider ID for `browser.searchSelection`. Adding any other command still requires a server code change and review.
+The allowlist is the central safety boundary. Browser-provided values must never become a shell command, executable path, script, arbitrary URL, or arbitrary argument list. Registered identifiers are `open_notepad`, the six `media.*` controls, five `audio.*` controls, three Spotify controls, eight fixed `browser.*` actions, and two `research.*` actions. Notepad still uses its narrow launcher. Media handlers operate only through `IMediaSessionService`; audio handlers only through `IAudioMixerService`; Spotify handlers only through `ISpotifyService`; browser handlers only through `IBrowserCommandService`; Research handlers accept either no payload or one positive stored item ID and use `IResearchInboxService`. The Pi never supplies a URL for Save or Open. Adding any other command still requires a server code change and review.
 
 `IPcCommandDispatcher` and `IPcCommandHandler` provide test seams. Handler failures are caught at the dispatcher boundary and converted to fixed browser-safe text; exception types may be logged, but exception messages and stack traces are not sent to the dashboard.
 
@@ -204,7 +219,8 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Displays generic media title, artist when available, source application, capability-aware transport controls, current/total time, and a touch-friendly seek range without assuming every item is music.
 - Mounts the same compact Spotify accessory in both Now Playing variants only when server state confidently applies. Like, shuffle, and repeat are primary; an expanded queue overlay and current device label are secondary. These commands are independent from generic media buttons, so API latency cannot delay Windows transport controls.
 - Renders a dedicated Audio workspace with one compact master-output section and an internally scrolling application list. The current output name is a touch button that opens an overlaid, internally bounded endpoint selector, so the list consumes no permanent mixer height. Active sessions sort first; inactive sessions remain available without receiving oversized cards. The document header and navigation never scroll.
-- Renders Browser / Research as a dedicated compact hierarchy: one-line page title/domain, seven capability-aware tab actions, a dynamic bounded selected-text/search panel, and the same reusable Firefox audio row. When the bridge is absent, only the restrained degraded label replaces browser actions; generic media, audio, header, and navigation remain intact.
+- Renders Browser / Research as a dedicated compact hierarchy: one-line page title/domain, prominent compact Save, seven capability-aware tab actions, a dynamic bounded selected-text/search panel, and the same reusable Firefox audio row. When the bridge is absent, only the restrained degraded label replaces browser actions; generic media, audio, header, and navigation remain intact.
+- Opens Research Inbox from More as a full-height dynamic workspace while retaining the fixed status header/navigation. Its recent list and detail areas scroll internally; list summaries remain bounded and selected text is fetched only for the touched entry.
 - Uses one `AudioMixerController` command path plus exported reusable volume/mute controllers for the full Audio page and context-composed rows. Slider thumbs update immediately, samples are coalesced to at most one send every 160 ms, and release schedules one final value after the short server safety gap.
 - Keeps authoritative Windows values separate from the local value under the user's finger. Incoming audio state updates metadata immediately but cannot move an actively dragged thumb. A matching post-command state clears the optimistic value; failures or a short reconciliation timeout restore the latest authoritative value.
 - Keeps output selection authoritative as well: tapping an endpoint immediately shows `Switching…`, but the check mark and current name change only when a later `audio_state` marks that endpoint as default. Failure restores the previous label and uses the existing accessible error feedback. The compact Audio navigation item remains the uncluttered global entry point rather than duplicating an endpoint list outside the Audio page.
@@ -220,7 +236,7 @@ The allowlist is the central safety boundary. Browser-provided values must never
 
 The dynamic workspace remains the extension seam for future capabilities. `context-composition.js` is a presentation policy and view coordinator, not a second state store: it derives which existing capabilities to show, mounts contextual volume rows into either the workspace or expanded Now Playing accessory slot, and delegates every mutation to the same `AudioMixerController`. The full Audio destination remains the complete mixer. Removing an audio entry disposes its interaction controller immediately, while server-side application-ID revalidation still protects a command already in flight.
 
-The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, `ui.js` owns the overall shell, `research-workspace.js` owns bounded Research view derivation and browser-action controls, `capability-matching.js` owns strict cross-signal identity rules, `context-composition.js` owns context presentation policy, `now-playing.js` owns reusable media rendering, `spotify-controls.js` owns optional Spotify controls/queue presentation, and `audio-mixer.js` owns the shared optimistic/coalesced volume interaction. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
+The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, `ui.js` owns the overall shell, `research-workspace.js` owns bounded Research view derivation/browser/Save controls, `research-inbox.js` owns authenticated bounded HTTP access plus list/detail interaction, `capability-matching.js` owns strict cross-signal identity rules, `context-composition.js` owns context presentation policy, `now-playing.js` owns reusable media rendering, `spotify-controls.js` owns optional Spotify controls/queue presentation, and `audio-mixer.js` owns the shared optimistic/coalesced volume interaction. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
 
 Repository-local module URLs share one manually advanced frontend version token. This is intentionally simpler than adding a build pipeline and prevents a long-lived Pi browser cache from combining incompatible HTML or JavaScript modules after an update.
 
@@ -288,6 +304,16 @@ Pins are intentionally in-memory and server-wide for this single-user, shared-to
 6. The existing connection manager broadcasts a `browser_state` projection over the already-authenticated PC-to-Pi WebSocket. It includes bounded selection only while Browser context is active; no state is persisted.
 7. The frontend renders concise Research metadata/actions and composes the same media/audio controllers already used elsewhere. Context resolution continues to consume the independent foreground process signal.
 8. For a browser action, the Pi sends only a fixed command ID and, for search, a configured provider ID. The host validates live state, builds any search URL itself, and sends a fixed command with an expected tab ID over loopback. Firefox revalidates that tab, executes through Tabs/Sessions/Clipboard APIs, and returns a correlated fixed result code.
+
+### Research Inbox capture and retrieval
+
+1. Browser state remains transient in `IBrowserIntegrationService`; no storage code observes its updates.
+2. The user taps Save. The Pi sends the payload-free allowlisted `research.saveCurrent` command.
+3. `ResearchInboxCommandHandler` takes a point-in-time copy of current title, URL, selected text, and browser name, then calls `IResearchInboxService`.
+4. The service revalidates/normalizes the URL and selection, inserts transactionally, or returns the existing exact deduplication match. It never logs the selected text.
+5. A real mutation refreshes counts and broadcasts a small `research_inbox_state`; the requester independently receives the normal correlated command result/toast. The Research workspace does not navigate away.
+6. Opening Inbox performs authenticated bounded HTTP queries. The initial list has only summaries; touching an entry requests that one detail, including selected text if explicitly saved.
+7. Review and Delete use exact stored IDs on authenticated HTTP endpoints, then publish a lightweight state revision. Open sends an exact stored ID through the command protocol; the host—not the Pi—resolves the validated URI and asks Firefox to create a tab.
 
 ### Command round trip
 

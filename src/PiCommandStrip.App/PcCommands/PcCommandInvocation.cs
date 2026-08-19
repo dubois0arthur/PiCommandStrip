@@ -10,4 +10,5 @@ public sealed record PcCommandInvocation(
     bool? IsSaved = null,
     bool? ShuffleEnabled = null,
     string? RepeatState = null,
-    string? SearchActionId = null);
+    string? SearchActionId = null,
+    long? ResearchItemId = null);

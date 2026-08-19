@@ -1,6 +1,6 @@
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
-const protocolVersion = "12";
+const protocolVersion = "13";
 const mediaCommandIds = new Set([
     "media.play",
     "media.pause",
@@ -30,6 +30,10 @@ const browserCommandIds = new Set([
     "browser.reopenClosedTab",
     "browser.copyCurrentUrl",
     "browser.searchSelection"
+]);
+const researchCommandIds = new Set([
+    "research.saveCurrent",
+    "research.openItem"
 ]);
 
 function createMessageId() {
@@ -244,6 +248,22 @@ export class DashboardSocket {
         return messageId;
     }
 
+    sendResearchCommand(commandId, { researchItemId } = {}) {
+        if (!this.isConnected || !researchCommandIds.has(commandId)) {
+            return null;
+        }
+        const payload = { commandId };
+        if (commandId === "research.openItem") {
+            if (!Number.isSafeInteger(researchItemId) || researchItemId <= 0) return null;
+            payload.researchItemId = researchItemId;
+        } else if (researchItemId !== undefined) {
+            return null;
+        }
+        const messageId = createMessageId();
+        this.#send("command_request", messageId, payload);
+        return messageId;
+    }
+
     sendContextSelection(selection) {
         if (!this.isConnected || !selection) {
             return null;
@@ -359,6 +379,9 @@ export class DashboardSocket {
                     break;
                 case "browser_state":
                     this.#callbacks.onBrowserState?.(message.payload);
+                    break;
+                case "research_inbox_state":
+                    this.#callbacks.onResearchInboxState?.(message.payload);
                     break;
                 case "context_selection_result":
                     this.#callbacks.onContextSelectionResult?.(message.payload);

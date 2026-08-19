@@ -3,6 +3,7 @@ using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.Contexts;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.Protocol;
+using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
 
 namespace PiCommandStrip.App.WebSockets;
@@ -26,6 +27,7 @@ public static class WebSocketEndpointExtensions
         services.AddSingleton<IAudioStateBroadcaster, WebSocketAudioStateBroadcaster>();
         services.AddSingleton<ISpotifyStateBroadcaster, WebSocketSpotifyStateBroadcaster>();
         services.AddSingleton<IBrowserStateBroadcaster, WebSocketBrowserStateBroadcaster>();
+        services.AddSingleton<IResearchInboxStateBroadcaster, WebSocketResearchInboxStateBroadcaster>();
         services.AddTransient<WebSocketConnectionHandler>();
 
         return services;

@@ -11,6 +11,7 @@ using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
+using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
 using PiCommandStrip.App.WebSockets;
 
@@ -180,6 +181,7 @@ public sealed class WebSocketAuthenticationTests
             new StubAudioMixerService(timeProvider),
             new StubSpotifyService(timeProvider),
             new StubBrowserIntegrationService(timeProvider),
+            new StubResearchInboxService(timeProvider),
             commandDispatcher,
             new ClientAuthenticationService(ValidToken, timeProvider),
             new AuthenticationAttemptLimiter(timeProvider),
@@ -379,6 +381,32 @@ public sealed class WebSocketAuthenticationTests
             BrowserExtensionCommand command,
             CancellationToken cancellationToken) => Task.FromResult(
                 new BrowserExtensionCommandResult(Guid.Empty, false, "bridge_disconnected"));
+    }
+
+    private sealed class StubResearchInboxService(TimeProvider timeProvider) : IResearchInboxService
+    {
+        public ResearchInboxState Current { get; } = new(
+            0, 0, 0, "initialized", null, timeProvider.GetUtcNow());
+
+        public Task<ResearchSaveResult> SaveAsync(
+            ResearchCapture capture,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ResearchInboxPage> GetPageAsync(
+            long? beforeId,
+            int limit,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<ResearchItem?> GetAsync(long id, CancellationToken cancellationToken) =>
+            Task.FromResult<ResearchItem?>(null);
+
+        public Task<bool> SetReviewedAsync(
+            long id,
+            bool isReviewed,
+            CancellationToken cancellationToken) => Task.FromResult(false);
+
+        public Task<bool> DeleteAsync(long id, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
     }
 
     private sealed class StubSpotifyService(TimeProvider timeProvider) : ISpotifyService

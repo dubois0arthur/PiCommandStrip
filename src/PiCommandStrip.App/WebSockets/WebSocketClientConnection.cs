@@ -7,6 +7,7 @@ using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
+using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
 
 namespace PiCommandStrip.App.WebSockets;
@@ -25,6 +26,7 @@ public sealed class WebSocketClientConnection(
     private AudioState? _lastSentAudioState;
     private SpotifyState? _lastSentSpotifyState;
     private BrowserState? _lastSentBrowserState;
+    private long? _lastSentResearchInboxRevision;
     private int _isAuthenticated;
     private int _isReadyForBroadcasts;
 
@@ -68,6 +70,7 @@ public sealed class WebSocketClientConnection(
         IAudioMixerService audioMixerService,
         ISpotifyService spotifyService,
         IBrowserIntegrationService browserIntegrationService,
+        IResearchInboxService researchInboxService,
         ServerMessageFactory messageFactory,
         CancellationToken cancellationToken)
     {
@@ -95,6 +98,10 @@ public sealed class WebSocketClientConnection(
                 cancellationToken);
             await SendBrowserStateCoreAsync(
                 browserIntegrationService.Current,
+                messageFactory,
+                cancellationToken);
+            await SendResearchInboxStateCoreAsync(
+                researchInboxService.Current,
                 messageFactory,
                 cancellationToken);
         }
@@ -228,6 +235,27 @@ public sealed class WebSocketClientConnection(
         try
         {
             await SendBrowserStateCoreAsync(state, messageFactory, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public async Task SendResearchInboxStateAsync(
+        ResearchInboxState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (!IsReadyForBroadcasts)
+        {
+            return;
+        }
+
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await SendResearchInboxStateCoreAsync(state, messageFactory, cancellationToken);
         }
         finally
         {
@@ -447,6 +475,29 @@ public sealed class WebSocketClientConnection(
             messageFactory.Create(MessageTypes.BrowserState, payload),
             cancellationToken);
         _lastSentBrowserState = state;
+    }
+
+    private async Task SendResearchInboxStateCoreAsync(
+        ResearchInboxState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (_lastSentResearchInboxRevision == state.Revision)
+        {
+            return;
+        }
+
+        var payload = new ResearchInboxStatePayload(
+            state.Revision,
+            state.TotalCount,
+            state.UnreviewedCount,
+            state.ChangeType,
+            state.ChangedItemId,
+            state.LastUpdatedUtc);
+        await SendCoreAsync(
+            messageFactory.Create(MessageTypes.ResearchInboxState, payload),
+            cancellationToken);
+        _lastSentResearchInboxRevision = state.Revision;
     }
 
     private async Task SendCoreAsync<TPayload>(

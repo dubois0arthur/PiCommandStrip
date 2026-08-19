@@ -1,4 +1,4 @@
-const protocolVersion = "2";
+const protocolVersion = "3";
 const defaultPort = 5078;
 const reconnectMaximumMilliseconds = 30000;
 const reconnectMinimumMilliseconds = 1000;
@@ -12,7 +12,8 @@ const browserCommandIds = new Set([
     "browser.closeTab",
     "browser.reopenClosedTab",
     "browser.copyCurrentUrl",
-    "browser.searchSelection"
+    "browser.searchSelection",
+    "research.openSavedUrl"
 ]);
 
 let activePageSignal = {
@@ -167,6 +168,17 @@ function isSafeSearchUrl(value) {
     }
 }
 
+function isSafeWebUrl(value) {
+    if (typeof value !== "string" || value.length > 4096) return false;
+    try {
+        const url = new URL(value);
+        return (url.protocol === "https:" || url.protocol === "http:") &&
+            !url.username && !url.password;
+    } catch {
+        return false;
+    }
+}
+
 async function handleBrowserCommand(message) {
     const requestMessageId = message?.messageId;
     const payload = message?.payload;
@@ -181,7 +193,8 @@ async function handleBrowserCommand(message) {
         const tabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
         const activeTab = tabs[0];
         const requiresTab = commandId !== "browser.newTab" &&
-            commandId !== "browser.reopenClosedTab";
+            commandId !== "browser.reopenClosedTab" &&
+            commandId !== "research.openSavedUrl";
         if (requiresTab &&
             (!activeTab || !Number.isInteger(payload.expectedActiveTabId) ||
              activeTab.id !== payload.expectedActiveTabId)) {
@@ -225,6 +238,13 @@ async function handleBrowserCommand(message) {
                 break;
             case "browser.searchSelection":
                 if (!isSafeSearchUrl(payload.searchUrl)) {
+                    sendCommandResult(requestMessageId, false, "invalid_command");
+                    return;
+                }
+                await browser.tabs.create({ url: payload.searchUrl, active: true });
+                break;
+            case "research.openSavedUrl":
+                if (!isSafeWebUrl(payload.searchUrl)) {
                     sendCommandResult(requestMessageId, false, "invalid_command");
                     return;
                 }

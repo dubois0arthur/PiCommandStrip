@@ -118,6 +118,14 @@ public sealed record BrowserStatePayload(
     bool? CanGoForward,
     DateTimeOffset LastUpdatedUtc);
 
+public sealed record ResearchInboxStatePayload(
+    long Revision,
+    int TotalCount,
+    int UnreviewedCount,
+    string ChangeType,
+    long? ChangedItemId,
+    DateTimeOffset LastUpdatedUtc);
+
 public sealed record ContextSelectionResultPayload(
     Guid RequestMessageId,
     bool Succeeded,
@@ -150,7 +158,8 @@ public sealed record CommandRequestPayload(
     bool? IsSaved = null,
     bool? ShuffleEnabled = null,
     string? RepeatState = null,
-    string? SearchActionId = null);
+    string? SearchActionId = null,
+    long? ResearchItemId = null);
 
 public sealed record ContextSelectionRequestPayload(string Mode, string? ContextId);
 

@@ -7,6 +7,7 @@ using PiCommandStrip.App.ForegroundWindows;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
+using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
 
 namespace PiCommandStrip.App.WebSockets;
@@ -23,6 +24,7 @@ public sealed class WebSocketConnectionHandler(
     IAudioMixerService audioMixerService,
     ISpotifyService spotifyService,
     IBrowserIntegrationService browserIntegrationService,
+    IResearchInboxService researchInboxService,
     IPcCommandDispatcher commandDispatcher,
     ClientAuthenticationService authenticationService,
     AuthenticationAttemptLimiter authenticationAttemptLimiter,
@@ -206,6 +208,7 @@ public sealed class WebSocketConnectionHandler(
                     audioMixerService,
                     spotifyService,
                     browserIntegrationService,
+                    researchInboxService,
                     messageFactory,
                     cancellationToken);
                 return;
@@ -303,7 +306,8 @@ public sealed class WebSocketConnectionHandler(
                     commandRequest.Payload.IsSaved,
                     commandRequest.Payload.ShuffleEnabled,
                     commandRequest.Payload.RepeatState,
-                    commandRequest.Payload.SearchActionId),
+                    commandRequest.Payload.SearchActionId,
+                    commandRequest.Payload.ResearchItemId),
                 cancellationToken);
         }
 

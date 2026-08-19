@@ -8,6 +8,7 @@ using PiCommandStrip.App.Health;
 using PiCommandStrip.App.Hosting;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
+using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
 using PiCommandStrip.App.WebSockets;
 
@@ -75,6 +76,7 @@ builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
 builder.Services.AddForegroundWindowMonitoring();
 builder.Services.AddWindowsMediaSessionMonitoring();
 builder.Services.AddWindowsAudioMixerMonitoring();
+builder.Services.AddResearchInbox();
 
 var app = builder.Build();
 var spotifyConfiguration = app.Services.GetRequiredService<SpotifyConfiguration>();
@@ -103,6 +105,7 @@ app.MapGet("/health", (HealthResponseFactory healthResponseFactory) =>
 app.MapMediaArtwork();
 app.MapSpotifyOAuth();
 app.MapBrowserIntegration();
+app.MapResearchInbox();
 app.MapPiCommandStripWebSocket();
 
 app.Run();

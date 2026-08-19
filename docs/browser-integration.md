@@ -2,7 +2,7 @@
 
 ## Scope
 
-The Firefox WebExtension reports concise active-tab/selection state to the Windows PiCommandStrip host and executes a fixed set of host-authorized browser actions. It enriches the existing Browser / Research context; it does not replace foreground-window context selection and it never accepts arbitrary URLs, JavaScript, keyboard input, or shell commands from the Pi.
+The Firefox WebExtension reports concise active-tab/selection state to the Windows PiCommandStrip host and executes a fixed set of host-authorized browser actions. It enriches the existing Browser / Research context; it does not replace foreground-window context selection and it never accepts arbitrary URLs, JavaScript, keyboard input, or shell commands from the Pi. Research Inbox Open is also ID-based from the Pi: the Windows host resolves the stored page and sends its validated web URI over this paired loopback bridge.
 
 ```text
 Firefox extension
@@ -85,7 +85,7 @@ Add a future Scholar, PubMed, GitHub, or documentation provider by adding anothe
 
 ## Loopback protocol
 
-The extension protocol is version `2`, separate from Pi dashboard protocol version `12`. Client messages are exact-shape UTF-8 JSON envelopes and are limited to 8,192 bytes.
+The extension protocol is version `3`, separate from Pi dashboard protocol version `13`. Client messages are exact-shape UTF-8 JSON envelopes and are limited to 8,192 bytes.
 
 The first message is `browser_hello`:
 
@@ -95,7 +95,7 @@ The first message is `browser_hello`:
   "messageId": "9bf38286-4603-4515-8ad2-84775abe3fd0",
   "timestampUtc": "2026-08-18T12:00:00.000Z",
   "payload": {
-    "protocolVersion": "2",
+    "protocolVersion": "3",
     "authenticationToken": "<separate 32-byte Base64 token>",
     "browserType": "firefox",
     "sourceIdentifier": "firefox-bridge@picommandstrip.local",
@@ -122,7 +122,7 @@ After `browser_bridge_ready`, the extension sends full `browser_state_update` sn
 }
 ```
 
-After authentication the host may send `browser_command` with one of eight fixed IDs. Tab-specific commands include the exact `expectedActiveTabId` retained by the host. The extension queries Firefox again and returns `stale_tab` without acting if focus changed. Only `browser.searchSelection` may contain `searchUrl`; it must be a bounded absolute HTTPS URL already constructed by the Windows host from a trusted template.
+After authentication the host may send `browser_command` with one of the fixed browser IDs or the internal `research.openSavedUrl` ID. Tab-specific commands include the exact `expectedActiveTabId` retained by the host. The extension queries Firefox again and returns `stale_tab` without acting if focus changed. `browser.searchSelection` may contain only a bounded absolute HTTPS URL constructed by the Windows host from a trusted template. `research.openSavedUrl` may contain only a bounded credential-free HTTP/HTTPS URI already loaded and revalidated from the host's Research Inbox; that command is never exposed as a Pi-supplied arbitrary URL contract.
 
 ```json
 {
@@ -144,7 +144,7 @@ The extension answers with exact-shape `browser_command_result` containing only 
 - Only absolute HTTP/HTTPS URLs are accepted. The host removes user information and fragments, derives an IDN-normalized lowercase hostname, and caps URLs at 2,048 characters.
 - Titles are capped at 512 UTF-16 characters.
 - Selected text is trimmed and safely capped at 1,000 UTF-16 characters without splitting a surrogate pair.
-- Selected text exists only in extension/host/Pi page memory. It is never persisted or included in normal logs.
+- Selected text exists only in extension/host/Pi page memory unless the user explicitly taps Research Save. Browser-state receipt never persists it, and selected content is never included in normal logs.
 - A tab switch, navigation, selection disappearance, or active bridge disconnect clears selected text. A disconnect clears all active-tab metadata.
 - The authenticated Pi receives the bounded selected text only while Browser context is active so it can render a strict 180-character preview. LAN transport is unencrypted and must remain on a trusted Private network.
 - Search templates live in Windows host configuration. `server_hello` sends only provider ID/display-name descriptors. The Pi returns only that provider ID; the Windows host reads its retained selection, applies `Uri.EscapeDataString`, and constructs the HTTPS URL.

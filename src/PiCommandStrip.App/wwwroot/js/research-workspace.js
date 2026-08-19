@@ -24,6 +24,7 @@ export function buildResearchViewModel(browserState, searchActions = []) {
     const selectedText = selectedTextPreview(browserState?.selectedText);
     return {
         connected,
+        canSave: connected && /^https?:\/\//i.test(browserState?.url || ""),
         title: connected
             ? browserState?.pageTitle || browserState?.hostName || "Firefox tab"
             : "Browser integration unavailable",
@@ -62,7 +63,8 @@ export class ResearchWorkspaceController {
         pageActionGrid,
         selectionPanel,
         selectionPreview,
-        searchActionGrid
+        searchActionGrid,
+        saveButton
     }) {
         this.root = root;
         this.title = title;
@@ -72,6 +74,7 @@ export class ResearchWorkspaceController {
         this.selectionPanel = selectionPanel;
         this.selectionPreview = selectionPreview;
         this.searchActionGrid = searchActionGrid;
+        this.saveButton = saveButton;
 
         pageActionGrid.addEventListener("click", event => {
             const button = event.target.closest("[data-browser-command]");
@@ -85,6 +88,10 @@ export class ResearchWorkspaceController {
                 commandId: "browser.searchSelection",
                 searchActionId: button.dataset.searchAction
             });
+        });
+        saveButton.addEventListener("click", () => {
+            if (saveButton.disabled) return;
+            this.#onCommand?.({ commandId: "research.saveCurrent" });
         });
     }
 
@@ -126,6 +133,10 @@ export class ResearchWorkspaceController {
         this.domain.textContent = model.domain;
         this.status.hidden = model.connected;
         this.status.textContent = "Bridge offline";
+        this.saveButton.disabled = !this.#connected || !model.canSave || Boolean(this.#pendingCommandId);
+        this.saveButton.dataset.pending = this.#pendingCommandId === "research.saveCurrent"
+            ? "true"
+            : "false";
 
         this.pageActionGrid.replaceChildren(...model.pageActions.map(action => {
             const button = document.createElement("button");

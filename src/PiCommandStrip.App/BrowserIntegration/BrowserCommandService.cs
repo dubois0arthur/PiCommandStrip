@@ -63,6 +63,29 @@ public sealed class BrowserCommandService(
             : Failure(FailureMessage(result.Code));
     }
 
+    public async Task<BrowserCommandResult> OpenTrustedUriAsync(
+        Uri uri,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        if (!uri.IsAbsoluteUri || uri.Scheme is not ("http" or "https") ||
+            string.IsNullOrWhiteSpace(uri.Host) || !string.IsNullOrEmpty(uri.UserInfo))
+        {
+            return Failure("The saved page URL is not a safe web address.");
+        }
+        if (!integrationService.Current.IsConnected)
+        {
+            return Failure("Browser integration is unavailable.");
+        }
+
+        var result = await integrationService.ExecuteExtensionCommandAsync(
+            new BrowserExtensionCommand("research.openSavedUrl", null, uri.AbsoluteUri),
+            cancellationToken);
+        return result.Succeeded
+            ? new BrowserCommandResult(true, "Saved page opened in Firefox.")
+            : Failure(FailureMessage(result.Code));
+    }
+
     private static string SuccessMessage(string commandId, string? searchActionId) => commandId switch
     {
         PcCommandIds.BrowserBack => "Navigated back.",

@@ -30,6 +30,10 @@ public interface IBrowserCommandService
         string commandId,
         string? searchActionId,
         CancellationToken cancellationToken);
+
+    Task<BrowserCommandResult> OpenTrustedUriAsync(
+        Uri uri,
+        CancellationToken cancellationToken);
 }
 
 public sealed record BrowserCommandResult(bool Succeeded, string Message);
