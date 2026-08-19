@@ -68,7 +68,7 @@ dotnet run --project src/PiCommandStrip.App/PiCommandStrip.App.csproj --no-build
 
 Open `http://localhost:5077`, enter the token, and press **Connect**. The page connects to `/ws` on the same origin. Press `Ctrl+C` to stop Kestrel gracefully.
 
-The dashboard is sized for the Raspberry Pi display's 1024x600 landscape CSS viewport. Add `?layoutDebug=1` to the URL, or press `Ctrl+Shift+D`, to outline the major interface regions and show the current viewport dimensions and device-pixel ratio. The shortcut can also close the overlay. Repeatable loopback-only fixtures include `no-media`, `long-media`, `audio`, `media`, `default-media`, `default-no-media`, `browser-owned`, `browser-foreign`, and `gaming`, selected with `&layoutFixture=...`. They alter only rendered state and cannot activate over a LAN hostname; protocol and command behavior remain unchanged.
+The dashboard is sized for the Raspberry Pi display's 1024x600 landscape CSS viewport. Add `?layoutDebug=1` to the URL, or press `Ctrl+Shift+D`, to outline the major interface regions and show the current viewport dimensions and device-pixel ratio. The shortcut can also close the overlay. Repeatable loopback-only fixtures include `no-media`, `long-media`, `audio`, `media`, `default-media`, `default-no-media`, `browser-owned`, `browser-foreign`, `browser-selected`, `browser-disconnected`, `browser-long`, and `gaming`, selected with `&layoutFixture=...`. They alter only rendered state and cannot activate over a LAN hostname; protocol and command behavior remain unchanged.
 
 ## Run for a Raspberry Pi client
 
@@ -102,7 +102,7 @@ Contexts compose the same media and audio capabilities rather than owning separa
 
 ## Optional Firefox browser bridge
 
-The Firefox extension in `browser-extension/firefox` enriches Browser / Research context with the active page title, HTTP(S) URL/hostname, tab ID, and whether the active page currently has selected text. It never sends page bodies or browsing history. Selected text is capped, kept only in memory on the Windows host, cleared on tab/navigation/disconnect changes, and represented to the Pi only as `hasSelectedText`; its contents are not logged or sent over the LAN.
+The Firefox extension in `browser-extension/firefox` enriches Browser / Research context with the active page title, HTTP(S) URL/hostname, tab ID, navigation capability, and bounded selected text. It never sends page bodies or browsing history. Selected text is capped, kept only in memory, cleared on tab/navigation/disconnect changes, never logged, and rendered on the authenticated Pi as a strict 180-character preview only while Browser context is active.
 
 Generate a separate browser-pairing token and store it in Windows User Secrets:
 
@@ -124,7 +124,7 @@ dotnet user-secrets set "PiCommandStrip:BrowserIntegration:Token" "$browserPairi
 
 Restart PiCommandStrip. In Firefox 147 or newer, open `about:debugging`, choose **This Firefox**, select **Load Temporary Add-on**, and choose `browser-extension/firefox/manifest.json`. Then open the extension's Preferences from `about:addons`, paste the browser-pairing token, leave port `5078`, and save. Temporary extensions are removed when Firefox restarts; a permanent distribution would require Mozilla signing and a review of its local insecure-WebSocket policy.
 
-The extension connects only to `ws://127.0.0.1:5078/browser-integration/ws`. The server also verifies that both socket endpoints are loopback and that the WebSocket origin is an extension origin (`moz-extension://` now, with `chrome-extension://` reserved for a future Chromium producer). This endpoint is not reachable through the PiCommandStrip LAN listener, accepts no commands, uses an 8 KiB message cap and a separate failed-pairing limiter, and does not reuse the Pi dashboard token. See [the browser integration guide](docs/browser-integration.md) for permissions, privacy details, protocol fields, and verification steps.
+The extension connects only to `ws://127.0.0.1:5078/browser-integration/ws`. The server also verifies that both socket endpoints are loopback and that the WebSocket origin is an extension origin (`moz-extension://` now, with `chrome-extension://` reserved for a future Chromium producer). This endpoint is not reachable through the PiCommandStrip LAN listener, accepts only fixed typed browser commands from the Windows host, uses an 8 KiB receive cap and a separate failed-pairing limiter, and does not reuse the Pi dashboard token. Search providers are configured under `PiCommandStrip:BrowserIntegration:SearchActions`; templates remain on Windows and must be absolute HTTPS URLs containing exactly one `{query}` placeholder. See [the browser integration guide](docs/browser-integration.md) for permissions, privacy details, protocol fields, and verification steps.
 
 ## Optional Spotify enrichment
 

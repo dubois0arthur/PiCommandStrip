@@ -1,11 +1,11 @@
-import { MuteButtonController, VolumeSliderController } from "./audio-mixer.js?v=15";
+import { MuteButtonController, VolumeSliderController } from "./audio-mixer.js?v=16";
 import {
     matchForegroundAudioApplication,
     matchMediaAudioApplication,
     mediaBelongsToForeground,
     normalizeProcessName,
     selectGamingAudioApplications
-} from "./capability-matching.js?v=15";
+} from "./capability-matching.js?v=16";
 
 function applicationEntry(application, role) {
     return {
@@ -56,6 +56,7 @@ export function buildContextComposition({ contextState, pcState, mediaState, aud
             mediaPresentation: compactMediaPresentation(hasMedia),
             expandedAudio: null,
             contextAudio: null,
+            researchAudio: null,
             mediaApplication,
             mediaOwnsForeground
         };
@@ -83,6 +84,7 @@ export function buildContextComposition({ contextState, pcState, mediaState, aud
                     showAudioLink: true
                 }
                 : null,
+            researchAudio: null,
             mediaApplication,
             mediaOwnsForeground
         };
@@ -90,22 +92,26 @@ export function buildContextComposition({ contextState, pcState, mediaState, aud
 
     if (contextId === "browser") {
         const promoteMedia = hasMedia && mediaOwnsForeground;
+        const foregroundApplication = matchForegroundAudioApplication(
+            audioState,
+            foregroundProcess);
+        const browserApplication = mediaApplication?.applicationId === foregroundApplication?.applicationId
+            ? mediaApplication
+            : foregroundApplication;
         return {
             workspaceMode: promoteMedia ? "browser-media" : "browser",
-            mediaPresentation: promoteMedia
-                ? "expanded"
-                : compactMediaPresentation(hasMedia),
-            expandedAudio: promoteMedia
+            mediaPresentation: compactMediaPresentation(hasMedia),
+            mediaEmphasis: promoteMedia ? "promoted" : "persistent",
+            expandedAudio: null,
+            contextAudio: null,
+            researchAudio: browserApplication
                 ? {
                     eyebrow: "Browser audio",
-                    title: mediaApplication
-                        ? `${mediaApplication.displayName} volume`
-                        : "Full mixer available",
-                    entries: expandedApplication,
+                    title: `${browserApplication.displayName} volume`,
+                    entries: [applicationEntry(browserApplication, "Firefox")],
                     showAudioLink: true
                 }
                 : null,
-            contextAudio: null,
             mediaApplication,
             mediaOwnsForeground
         };
@@ -141,6 +147,7 @@ export function buildContextComposition({ contextState, pcState, mediaState, aud
                                     : "Other active audio")),
                 showAudioLink: true
             },
+            researchAudio: null,
             mediaApplication,
             mediaOwnsForeground
         };
@@ -167,6 +174,7 @@ export function buildContextComposition({ contextState, pcState, mediaState, aud
                 showAudioLink: true
             }
             : null,
+        researchAudio: null,
         mediaApplication,
         mediaOwnsForeground
     };
@@ -351,10 +359,12 @@ class ContextVolumeSurface {
 export class ContextCompositionController {
     #contextSurface;
     #expandedSurface;
+    #researchSurface;
 
     constructor({
         contextRoot,
         expandedRoot,
+        researchRoot,
         template,
         requestCommand,
         onNavigateAudio
@@ -369,15 +379,22 @@ export class ContextCompositionController {
             template,
             requestCommand,
             onNavigateAudio);
+        this.#researchSurface = new ContextVolumeSurface(
+            researchRoot,
+            template,
+            requestCommand,
+            onNavigateAudio);
     }
 
     setConnected(connected) {
         this.#expandedSurface.setConnected(connected);
         this.#contextSurface.setConnected(connected);
+        this.#researchSurface.setConnected(connected);
     }
 
     render(composition) {
         this.#expandedSurface.render(composition.expandedAudio);
         this.#contextSurface.render(composition.contextAudio);
+        this.#researchSurface.render(composition.researchAudio);
     }
 }

@@ -68,7 +68,9 @@ builder.Services.AddSingleton<HealthResponseFactory>();
 builder.Services.AddSpotifyIntegration(piCommandStripOptions.Spotify, networkOptions.Port);
 builder.Services.AddPcCommands();
 builder.Services.AddPiCommandStripWebSockets(commandCooldown);
-builder.Services.AddBrowserIntegration(browserIntegrationConfiguration);
+builder.Services.AddBrowserIntegration(
+    browserIntegrationConfiguration,
+    piCommandStripOptions.BrowserIntegration);
 builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
 builder.Services.AddForegroundWindowMonitoring();
 builder.Services.AddWindowsMediaSessionMonitoring();

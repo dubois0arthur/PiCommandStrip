@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 11 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 12 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, optional Spotify enrichment state, optional Firefox browser state, automatic/manual context selection, structured errors, and fixed allowlisted commands. Version 11 adds browser enrichment while retaining version 10 Spotify behavior and all generic media/audio behavior.
+This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, optional Spotify enrichment state, optional Firefox research state/actions, automatic/manual context selection, structured errors, and fixed allowlisted commands. Version 12 adds constrained Research command contracts and bounded selected-text preview while retaining all generic media/audio/browser-state behavior.
 
 ## Transport
 
@@ -52,17 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "11",
+    "protocolVersion": "12",
     "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `11`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `12`.
 - `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
 
-The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 11 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token; use only a trusted Private network and do not expose the port to the internet.
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 12 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token and transient selected-text previews; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -142,6 +142,14 @@ The allowlisted identifiers are:
 - `spotify.setSaved`
 - `spotify.setShuffle`
 - `spotify.setRepeat`
+- `browser.back`
+- `browser.forward`
+- `browser.reload`
+- `browser.newTab`
+- `browser.closeTab`
+- `browser.reopenClosedTab`
+- `browser.copyCurrentUrl`
+- `browser.searchSelection`
 
 `media.seek` has exactly this shape:
 
@@ -194,6 +202,22 @@ The parser bounds the ID to 512 characters, and the audio service then requires 
 
 Spotify enhancement commands are accepted only for the server's confidently matched current Spotify item. Their exact additional fields are a Boolean `isSaved`, a Boolean `shuffleEnabled`, or a `repeatState` of `off`, `context`, or `track`, respectively. No access token, client secret, Spotify URI, device ID, arbitrary endpoint, or extra property is accepted from the browser. These commands call only `ISpotifyService` and return ordinary `command_result` messages. The generic `media.*` controls remain separate and continue to work if Spotify is disabled or unavailable.
 
+Browser navigation/tab commands contain only their fixed `commandId`. Selected-text search contains exactly a configured provider identifier:
+
+```json
+{
+  "type": "command_request",
+  "messageId": "e227745c-5d58-4859-92fb-b5586c685b13",
+  "timestampUtc": "2026-08-18T12:00:04.000Z",
+  "payload": {
+    "commandId": "browser.searchSelection",
+    "searchActionId": "wikipedia"
+  }
+}
+```
+
+The Pi cannot send selected text, an arbitrary URL, JavaScript, keyboard input, or a raw extension command. `IBrowserCommandService` resolves the provider against the host-owned search catalog, reads the current bounded selection from host memory, URL-encodes it, and builds an absolute HTTPS URL from the configured fixed template. Tab-specific actions carry the retained active-tab ID only on the separate Windows-loopback bridge; the extension re-queries the active tab and rejects a stale mismatch before acting.
+
 ## Server-to-client messages
 
 ### `server_hello`
@@ -207,7 +231,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "11",
+    "protocolVersion": "12",
     "maximumMessageSizeBytes": 16384,
     "availableContexts": [
       { "contextId": "default", "displayName": "Default" },
@@ -215,12 +239,19 @@ The first message sent by the server after accepting a connection.
       { "contextId": "browser", "displayName": "Browser / Research" },
       { "contextId": "gaming", "displayName": "Gaming" },
       { "contextId": "audio", "displayName": "Audio" }
+    ],
+    "availableBrowserSearchActions": [
+      { "actionId": "google", "displayName": "Google" },
+      { "actionId": "wikipedia", "displayName": "Wikipedia" },
+      { "actionId": "youtube", "displayName": "YouTube" }
     ]
   }
 }
 ```
 
 `availableContexts` is presentation metadata for constructing the manual selector. It does not allow the browser to define profiles; the server still validates every selected ID against its own catalog.
+
+`availableBrowserSearchActions` contains presentation-only provider IDs and names from host configuration. Templates are never sent to the Pi, and every incoming provider ID is revalidated against the same host catalog before use.
 
 ### `pong`
 
@@ -395,13 +426,13 @@ Reports the normalized state of the default multimedia render endpoint and its u
 }
 ```
 
-`outputDevices` contains the currently usable Windows render endpoints. `deviceId` is the stable opaque Core Audio endpoint ID, `friendlyName` is display text, `state` is currently `active` for a usable entry, and exactly the observed Multimedia default is marked with `isDefault`. Device IDs are not filesystem paths and the selector never treats them as executable input. Application `volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. Application `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 11.
+`outputDevices` contains the currently usable Windows render endpoints. `deviceId` is the stable opaque Core Audio endpoint ID, `friendlyName` is display text, `state` is currently `active` for a usable entry, and exactly the observed Multimedia default is marked with `isDefault`. Device IDs are not filesystem paths and the selector never treats them as executable input. Application `volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. Application `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 12.
 
 `applicationId` is a server-generated SHA-256 identifier for the grouping key. It is stable while the grouping evidence is stable and never exposes a process path or raw Windows session identifier. `sessionCount` shows how many underlying Windows controls contribute to the entry. `hasMixedVolume` and `hasMixedMute` indicate that those controls disagree. The reported grouped volume is the maximum member scalar, and grouped `isMuted` is true only when every member is muted.
 
 When no default output is available, `isAvailable` is `false`, `outputDevice` is `null`, and `applications` is empty. `outputDevices` can still contain active endpoints that may establish a new default. `revision` starts at zero and increases monotonically for this host process whenever the normalized meaning changes, including endpoint arrival/removal and default-role changes. `lastUpdatedUtc` records that meaningful observation; timestamp-only samples do not produce a message.
 
-Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 11 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative. The device selector shows processing feedback but does not mark a choice current until an authoritative state identifies it as the default.
+Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 12 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative. The device selector shows processing feedback but does not mark a choice current until an authoritative state identifies it as the default.
 
 ### `spotify_state`
 
@@ -441,7 +472,7 @@ An enrichment error may retain the last matched values for readable degraded sta
 
 ### `browser_state`
 
-Reports optional browser enrichment retained by `IBrowserIntegrationService`. A newly authenticated Pi dashboard receives the current state after the Spotify snapshot. Meaningful extension connect, active-tab, URL/title, selection-presence, and disconnect changes are then broadcast independently.
+Reports optional browser enrichment retained by `IBrowserIntegrationService`. A newly authenticated Pi dashboard receives the current state after the Spotify snapshot. Meaningful extension connect, active-tab, URL/title, bounded selection, navigation-capability, and disconnect changes are then broadcast independently.
 
 ```json
 {
@@ -457,9 +488,10 @@ Reports optional browser enrichment retained by `IBrowserIntegrationService`. A 
     "url": "https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions",
     "hostName": "developer.mozilla.org",
     "pageTitle": "Browser extensions - Mozilla | MDN",
-    "hasSelectedText": false,
-    "canGoBack": null,
-    "canGoForward": null,
+    "hasSelectedText": true,
+    "selectedText": "A bounded passage selected for research",
+    "canGoBack": true,
+    "canGoForward": false,
     "lastUpdatedUtc": "2026-08-18T12:00:03.0990000+00:00"
   }
 }
@@ -467,9 +499,9 @@ Reports optional browser enrichment retained by `IBrowserIntegrationService`. A 
 
 `connectionState` is `connected` or `disconnected`. Browser/source/instance identify the producer but are not authentication credentials. Firefox tab IDs are valid only for the current browser session and may be reused. `url` is either a sanitized absolute HTTP/HTTPS URL or `null`: URI user information and fragments are removed before publication. `hostName` is derived server-side and IDN-normalized. Restricted/internal pages can therefore report only a title or no page metadata.
 
-Selected text content never appears in this protocol. The extension-to-host bridge can supply a bounded string to the Windows-only memory model, but this message exposes only `hasSelectedText`. `canGoBack` and `canGoForward` are nullable because Firefox currently offers the operations without a reliable non-mutating availability query.
+`selectedText` is transient, trimmed, and capped at 1,000 UTF-16 characters by the Windows host; the frontend additionally limits the visible preview to 180 characters. It is present only while Browser context is active and a current selection exists. It is never persisted or logged. `hasSelectedText` remains an explicit convenience flag. `canGoBack` and `canGoForward` are nullable: the content script reports exact values where Firefox exposes the Navigation API, and unknown is rendered disabled rather than guessed.
 
-A disconnected state has `connectionState: "disconnected"`, `hasSelectedText: false`, and `null` for every other browser field. Browser state does not select Browser / Research context; the existing foreground-process resolver remains authoritative. See [browser-integration.md](browser-integration.md) for the separate localhost protocol, pairing, permissions, and privacy boundary.
+A disconnected state has `connectionState: "disconnected"`, `hasSelectedText: false`, and `null` for every other browser field including `selectedText`. Browser state does not select Browser / Research context; the existing foreground-process resolver remains authoritative. See [browser-integration.md](browser-integration.md) for the separate localhost protocol, pairing, permissions, commands, and privacy boundary.
 
 ### `context_selection_result`
 
@@ -545,7 +577,7 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` with protocol version 11, its fresh UTC timestamp, and the configured token.
+4. The dashboard sends `client_hello` with protocol version 12, its fresh UTC timestamp, and the configured token.
 5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
 6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, `audio_state`, `spotify_state`, and `browser_state` snapshots in that order.
 7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, audio, Spotify, and browser changes are broadcast independently.

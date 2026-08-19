@@ -17,4 +17,24 @@ public static class PcCommandIds
     public const string SpotifySetSaved = "spotify.setSaved";
     public const string SpotifySetShuffle = "spotify.setShuffle";
     public const string SpotifySetRepeat = "spotify.setRepeat";
+    public const string BrowserBack = "browser.back";
+    public const string BrowserForward = "browser.forward";
+    public const string BrowserReload = "browser.reload";
+    public const string BrowserNewTab = "browser.newTab";
+    public const string BrowserCloseTab = "browser.closeTab";
+    public const string BrowserReopenClosedTab = "browser.reopenClosedTab";
+    public const string BrowserCopyCurrentUrl = "browser.copyCurrentUrl";
+    public const string BrowserSearchSelection = "browser.searchSelection";
+
+    public static IReadOnlyList<string> BrowserCommands { get; } =
+    [
+        BrowserBack,
+        BrowserForward,
+        BrowserReload,
+        BrowserNewTab,
+        BrowserCloseTab,
+        BrowserReopenClosedTab,
+        BrowserCopyCurrentUrl,
+        BrowserSearchSelection
+    ];
 }

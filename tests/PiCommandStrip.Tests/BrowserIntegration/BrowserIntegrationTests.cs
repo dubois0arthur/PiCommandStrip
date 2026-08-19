@@ -100,6 +100,33 @@ public sealed class BrowserIntegrationTests
     }
 
     [Fact]
+    public void Parser_AcceptsBoundedCommandResult_AndRejectsExtraData()
+    {
+        var parser = new BrowserIntegrationMessageParser();
+        var requestMessageId = Guid.NewGuid();
+        var valid = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = BrowserIntegrationProtocol.CommandResultType,
+            messageId = Guid.NewGuid(),
+            timestampUtc = Now,
+            payload = new { requestMessageId, succeeded = true, code = "ok" }
+        });
+
+        var result = Assert.IsType<BrowserCommandResultMessage>(parser.Parse(valid).Message);
+        Assert.Equal(requestMessageId, result.Result.RequestMessageId);
+        Assert.True(result.Result.Succeeded);
+
+        var extra = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = BrowserIntegrationProtocol.CommandResultType,
+            messageId = Guid.NewGuid(),
+            timestampUtc = Now,
+            payload = new { requestMessageId, succeeded = true, code = "ok", details = "private" }
+        });
+        Assert.Equal("invalid_payload", parser.Parse(extra).Error?.Code);
+    }
+
+    [Fact]
     public void Normalizer_SanitizesUrlDomainAndSafelyCapsSelectedText()
     {
         var normalizer = new BrowserStateNormalizer();
@@ -139,6 +166,8 @@ public sealed class BrowserIntegrationTests
             time);
         var first = Guid.NewGuid();
         var second = Guid.NewGuid();
+        var firstChannel = new RecordingCommandChannel();
+        var secondChannel = new RecordingCommandChannel();
         var identity = new BrowserIdentity("firefox", "extension", "instance");
         var selected = new BrowserTabObservation(
             1,
@@ -148,7 +177,7 @@ public sealed class BrowserIntegrationTests
             null,
             null);
 
-        await service.BeginConnectionAsync(first, identity, CancellationToken.None);
+        await service.BeginConnectionAsync(first, identity, firstChannel, CancellationToken.None);
         await service.SetBrowserContextActiveAsync(true, CancellationToken.None);
         await service.ApplyObservationAsync(first, selected, CancellationToken.None);
         await service.ApplyObservationAsync(first, selected, CancellationToken.None);
@@ -180,7 +209,11 @@ public sealed class BrowserIntegrationTests
         await service.SetBrowserContextActiveAsync(false, CancellationToken.None);
         Assert.Null(service.Current.SelectedText);
 
-        await service.BeginConnectionAsync(second, identity with { InstanceIdentifier = "new" }, CancellationToken.None);
+        await service.BeginConnectionAsync(
+            second,
+            identity with { InstanceIdentifier = "new" },
+            secondChannel,
+            CancellationToken.None);
         await service.EndConnectionAsync(first, CancellationToken.None);
         Assert.True(service.Current.IsConnected);
 
@@ -209,6 +242,23 @@ public sealed class BrowserIntegrationTests
             States.Add(state);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class RecordingCommandChannel : IBrowserExtensionCommandChannel
+    {
+        public Task<BrowserExtensionCommandResult> ExecuteAsync(
+            BrowserExtensionCommand command,
+            CancellationToken cancellationToken) => Task.FromResult(
+                new BrowserExtensionCommandResult(Guid.NewGuid(), true, "ok"));
+
+        public Task SendEnvelopeAsync<TPayload>(
+            string type,
+            TPayload payload,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public bool TryComplete(BrowserExtensionCommandResult result) => true;
+
+        public void FailPending() { }
     }
 
     private sealed class TestTimeProvider(DateTimeOffset now) : TimeProvider

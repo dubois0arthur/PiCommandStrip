@@ -1,10 +1,27 @@
-const protocolVersion = "1";
+const protocolVersion = "2";
 const defaultPort = 5078;
 const reconnectMaximumMilliseconds = 30000;
 const reconnectMinimumMilliseconds = 1000;
 const stateDebounceMilliseconds = 100;
 
-let activeSelection = { tabId: null, url: null, text: null };
+const browserCommandIds = new Set([
+    "browser.back",
+    "browser.forward",
+    "browser.reload",
+    "browser.newTab",
+    "browser.closeTab",
+    "browser.reopenClosedTab",
+    "browser.copyCurrentUrl",
+    "browser.searchSelection"
+]);
+
+let activePageSignal = {
+    tabId: null,
+    url: null,
+    text: null,
+    canGoBack: null,
+    canGoForward: null
+};
 let authenticated = false;
 let bridgeStatus = "unconfigured";
 let captureTimer;
@@ -104,6 +121,8 @@ function connect() {
                 lastSentState = undefined;
                 setStatus("connected");
                 scheduleCapture();
+            } else if (message.type === "browser_command") {
+                handleBrowserCommand(message);
             } else if (message.type === "error") {
                 setStatus(message.payload?.code?.startsWith("authentication_")
                     ? "authentication_failed"
@@ -129,6 +148,101 @@ function connect() {
     });
 }
 
+function sendCommandResult(requestMessageId, succeeded, code) {
+    if (!authenticated || socket?.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(createEnvelope("browser_command_result", {
+        requestMessageId,
+        succeeded,
+        code
+    })));
+}
+
+function isSafeSearchUrl(value) {
+    if (typeof value !== "string" || value.length > 2048) return false;
+    try {
+        const url = new URL(value);
+        return url.protocol === "https:" && !url.username && !url.password;
+    } catch {
+        return false;
+    }
+}
+
+async function handleBrowserCommand(message) {
+    const requestMessageId = message?.messageId;
+    const payload = message?.payload;
+    const commandId = payload?.commandId;
+    if (typeof requestMessageId !== "string" ||
+        !browserCommandIds.has(commandId)) {
+        sendCommandResult(requestMessageId, false, "invalid_command");
+        return;
+    }
+
+    try {
+        const tabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+        const activeTab = tabs[0];
+        const requiresTab = commandId !== "browser.newTab" &&
+            commandId !== "browser.reopenClosedTab";
+        if (requiresTab &&
+            (!activeTab || !Number.isInteger(payload.expectedActiveTabId) ||
+             activeTab.id !== payload.expectedActiveTabId)) {
+            sendCommandResult(requestMessageId, false, "stale_tab");
+            return;
+        }
+
+        switch (commandId) {
+            case "browser.back":
+                await browser.tabs.goBack(activeTab.id);
+                break;
+            case "browser.forward":
+                await browser.tabs.goForward(activeTab.id);
+                break;
+            case "browser.reload":
+                await browser.tabs.reload(activeTab.id);
+                break;
+            case "browser.newTab":
+                await browser.tabs.create({ active: true });
+                break;
+            case "browser.closeTab":
+                await browser.tabs.remove(activeTab.id);
+                break;
+            case "browser.reopenClosedTab": {
+                const sessions = await browser.sessions.getRecentlyClosed({ maxResults: 10 });
+                const closedTab = sessions.find(session => session.tab?.sessionId);
+                if (!closedTab) {
+                    sendCommandResult(requestMessageId, false, "no_closed_tab");
+                    return;
+                }
+                await browser.sessions.restore(closedTab.tab.sessionId);
+                break;
+            }
+            case "browser.copyCurrentUrl":
+                if (typeof activeTab.url !== "string" ||
+                    !/^https?:\/\//i.test(activeTab.url)) {
+                    sendCommandResult(requestMessageId, false, "clipboard_failed");
+                    return;
+                }
+                await navigator.clipboard.writeText(activeTab.url);
+                break;
+            case "browser.searchSelection":
+                if (!isSafeSearchUrl(payload.searchUrl)) {
+                    sendCommandResult(requestMessageId, false, "invalid_command");
+                    return;
+                }
+                await browser.tabs.create({ url: payload.searchUrl, active: true });
+                break;
+        }
+
+        sendCommandResult(requestMessageId, true, "ok");
+        scheduleCapture();
+    } catch {
+        sendCommandResult(
+            requestMessageId,
+            false,
+            commandId === "browser.copyCurrentUrl" ? "clipboard_failed" : "command_failed");
+        scheduleCapture();
+    }
+}
+
 function normalizeSelection(value) {
     const text = typeof value === "string" ? value.trim() : "";
     if (!text) return null;
@@ -139,7 +253,7 @@ async function readActiveTab() {
     const tabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
     const tab = tabs[0];
     if (!tab) {
-        activeSelection = { tabId: null, url: null, text: null };
+        activePageSignal = { tabId: null, url: null, text: null, canGoBack: null, canGoForward: null };
         return {
             activeTabId: null,
             url: null,
@@ -151,17 +265,17 @@ async function readActiveTab() {
     }
 
     const url = typeof tab.url === "string" ? tab.url : null;
-    if (activeSelection.tabId !== tab.id || activeSelection.url !== url) {
-        activeSelection = { tabId: tab.id, url, text: null };
+    if (activePageSignal.tabId !== tab.id || activePageSignal.url !== url) {
+        activePageSignal = { tabId: tab.id, url, text: null, canGoBack: null, canGoForward: null };
     }
 
     return {
         activeTabId: Number.isInteger(tab.id) ? tab.id : null,
         url,
         title: typeof tab.title === "string" ? tab.title : null,
-        selectedText: activeSelection.text,
-        canGoBack: null,
-        canGoForward: null
+        selectedText: activePageSignal.text,
+        canGoBack: activePageSignal.canGoBack,
+        canGoForward: activePageSignal.canGoForward
     };
 }
 
@@ -184,14 +298,14 @@ function scheduleCapture() {
 }
 
 browser.tabs.onActivated.addListener(() => {
-    activeSelection = { tabId: null, url: null, text: null };
+    activePageSignal = { tabId: null, url: null, text: null, canGoBack: null, canGoForward: null };
     scheduleCapture();
 });
 
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (!tab.active) return;
     if (Object.hasOwn(changeInfo, "url")) {
-        activeSelection = { tabId, url: changeInfo.url ?? null, text: null };
+        activePageSignal = { tabId, url: changeInfo.url ?? null, text: null, canGoBack: null, canGoForward: null };
     }
     if (Object.hasOwn(changeInfo, "url") ||
         Object.hasOwn(changeInfo, "title") ||
@@ -201,8 +315,8 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 browser.tabs.onRemoved.addListener(tabId => {
-    if (activeSelection.tabId === tabId) {
-        activeSelection = { tabId: null, url: null, text: null };
+    if (activePageSignal.tabId === tabId) {
+        activePageSignal = { tabId: null, url: null, text: null, canGoBack: null, canGoForward: null };
     }
     scheduleCapture();
 });
@@ -213,11 +327,13 @@ browser.runtime.onConnect.addListener(port => {
     if (port.name !== "selection-observer") return;
     port.onMessage.addListener(message => {
         const senderTab = port.sender?.tab;
-        if (message?.type !== "selection_changed" || !senderTab?.active) return;
-        activeSelection = {
+        if (message?.type !== "page_state_changed" || !senderTab?.active) return;
+        activePageSignal = {
             tabId: senderTab.id,
             url: typeof senderTab.url === "string" ? senderTab.url : null,
-            text: normalizeSelection(message.selectedText)
+            text: normalizeSelection(message.selectedText),
+            canGoBack: typeof message.canGoBack === "boolean" ? message.canGoBack : null,
+            canGoForward: typeof message.canGoForward === "boolean" ? message.canGoForward : null
         };
         scheduleCapture();
     });

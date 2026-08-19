@@ -1,6 +1,6 @@
 const reconnectDelayMilliseconds = 2000;
 const pingTimeoutMilliseconds = 5000;
-const protocolVersion = "11";
+const protocolVersion = "12";
 const mediaCommandIds = new Set([
     "media.play",
     "media.pause",
@@ -20,6 +20,16 @@ const spotifyCommandIds = new Set([
     "spotify.setSaved",
     "spotify.setShuffle",
     "spotify.setRepeat"
+]);
+const browserCommandIds = new Set([
+    "browser.back",
+    "browser.forward",
+    "browser.reload",
+    "browser.newTab",
+    "browser.closeTab",
+    "browser.reopenClosedTab",
+    "browser.copyCurrentUrl",
+    "browser.searchSelection"
 ]);
 
 function createMessageId() {
@@ -206,6 +216,27 @@ export class DashboardSocket {
         } else {
             if (!["off", "context", "track"].includes(repeatState)) return null;
             payload.repeatState = repeatState;
+        }
+
+        const messageId = createMessageId();
+        this.#send("command_request", messageId, payload);
+        return messageId;
+    }
+
+    sendBrowserCommand(commandId, { searchActionId } = {}) {
+        if (!this.isConnected || !browserCommandIds.has(commandId)) {
+            return null;
+        }
+
+        const payload = { commandId };
+        if (commandId === "browser.searchSelection") {
+            if (typeof searchActionId !== "string" ||
+                !/^[a-z0-9][a-z0-9._-]{0,49}$/.test(searchActionId)) {
+                return null;
+            }
+            payload.searchActionId = searchActionId;
+        } else if (searchActionId !== undefined) {
+            return null;
         }
 
         const messageId = createMessageId();

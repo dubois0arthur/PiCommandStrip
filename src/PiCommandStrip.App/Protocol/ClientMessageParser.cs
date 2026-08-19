@@ -301,6 +301,40 @@ public sealed class ClientMessageParser
                 new CommandRequestPayload(commandId, RepeatState: repeatState)));
         }
 
+        if (commandId == PcCommandIds.BrowserSearchSelection)
+        {
+            if (!HasExactlyProperties(payload, "commandId", "searchActionId") ||
+                !TryGetRequiredString(payload, "searchActionId", out var searchActionId) ||
+                !BrowserIntegration.BrowserSearchCatalog.IsValidActionId(searchActionId))
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    $"'{commandId}' requires only 'commandId' and a safe bounded 'searchActionId'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId, SearchActionId: searchActionId)));
+        }
+
+        if (PcCommandIds.BrowserCommands.Contains(commandId, StringComparer.Ordinal))
+        {
+            if (!HasExactlyOneProperty(payload, "commandId"))
+            {
+                return ProtocolParseResult.Failure(
+                    "invalid_payload",
+                    "This browser command payload may contain only 'commandId'.",
+                    messageId);
+            }
+
+            return ProtocolParseResult.Success(new CommandRequestMessage(
+                messageId,
+                timestampUtc,
+                new CommandRequestPayload(commandId)));
+        }
+
         if (!HasExactlyOneProperty(payload, "commandId"))
         {
             return ProtocolParseResult.Failure(

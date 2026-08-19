@@ -18,6 +18,7 @@ public sealed class WebSocketConnectionHandler(
     ForegroundStateStore foregroundStateStore,
     ContextStateCoordinator contextStateCoordinator,
     ContextCatalog contextCatalog,
+    BrowserSearchCatalog browserSearchCatalog,
     IMediaSessionService mediaSessionService,
     IAudioMixerService audioMixerService,
     ISpotifyService spotifyService,
@@ -54,6 +55,11 @@ public sealed class WebSocketConnectionHandler(
                             .Select(profile => new ContextDescriptorPayload(
                                 profile.Id,
                                 profile.DisplayName))
+                            .ToArray(),
+                        browserSearchCatalog.Actions
+                            .Select(action => new BrowserSearchActionPayload(
+                                action.Id,
+                                action.DisplayName))
                             .ToArray())),
                 cancellationToken);
 
@@ -296,7 +302,8 @@ public sealed class WebSocketConnectionHandler(
                     commandRequest.Payload.DeviceId,
                     commandRequest.Payload.IsSaved,
                     commandRequest.Payload.ShuffleEnabled,
-                    commandRequest.Payload.RepeatState),
+                    commandRequest.Payload.RepeatState,
+                    commandRequest.Payload.SearchActionId),
                 cancellationToken);
         }
 

@@ -76,6 +76,38 @@
 
             <main id="workspace" class="workspace" data-debug-label="Dynamic workspace">
                 <section id="workspace-surface" class="workspace-surface">
+                    <section id="research-workspace" class="research-workspace" aria-labelledby="research-title" hidden>
+                        <header class="research-page-summary">
+                            <div class="research-page-copy">
+                                <span class="eyebrow">Research</span>
+                                <h2 id="research-title">Firefox context</h2>
+                                <p id="research-domain">Waiting for browser integration</p>
+                            </div>
+                            <span id="research-integration-status" class="research-integration-status">Bridge offline</span>
+                        </header>
+
+                        <section class="research-page-actions" aria-label="Current browser tab actions">
+                            <div id="research-page-action-grid" class="research-action-grid"></div>
+                        </section>
+
+                        <div class="research-capability-region">
+                            <section id="research-selection-panel" class="research-selection-panel" aria-labelledby="research-selection-title" hidden>
+                                <div class="research-selection-copy">
+                                    <span id="research-selection-title" class="eyebrow">Selected text</span>
+                                    <p id="research-selection-preview"></p>
+                                </div>
+                                <div id="research-search-action-grid" class="research-search-action-grid" aria-label="Search selected text"></div>
+                            </section>
+
+                            <section
+                                id="research-audio-capabilities"
+                                class="context-audio-capabilities research-audio-capabilities"
+                                aria-label="Browser audio controls"
+                                hidden>
+                            </section>
+                        </div>
+                    </section>
+
                     <section
                         id="expanded-now-playing"
                         class="now-playing-host now-playing-host-expanded"
@@ -411,6 +443,6 @@
         <span>Ctrl+Shift+D to close</span>
     </aside>
 
-    <script type="module" src="/js/dashboard.js?v=15"></script>
+    <script type="module" src="/js/dashboard.js?v=16"></script>
 </body>
 </html>

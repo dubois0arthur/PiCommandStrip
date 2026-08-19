@@ -1,6 +1,4 @@
 using System.Net.WebSockets;
-using System.Text.Json;
-using PiCommandStrip.App.Protocol;
 using PiCommandStrip.App.WebSockets;
 
 namespace PiCommandStrip.App.BrowserIntegration;
@@ -11,12 +9,14 @@ public sealed class BrowserIntegrationConnectionHandler(
     BrowserAuthenticationAttemptLimiter authenticationAttemptLimiter,
     IBrowserIntegrationService integrationService,
     WebSocketMessageReader messageReader,
+    TimeProvider timeProvider,
     IHostApplicationLifetime applicationLifetime,
     ILogger<BrowserIntegrationConnectionHandler> logger)
 {
     public async Task HandleAsync(WebSocket socket, CancellationToken requestCancellationToken)
     {
         var connectionId = Guid.NewGuid();
+        using var commandChannel = new BrowserExtensionCommandChannel(socket, timeProvider);
         var authenticated = false;
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             requestCancellationToken,
@@ -49,7 +49,7 @@ public sealed class BrowserIntegrationConnectionHandler(
                     var code = received.Kind == ReceivedMessageKind.TooLarge
                         ? "message_too_large"
                         : "unsupported_data";
-                    await SendErrorAsync(socket, null, code, "The browser bridge message was rejected.", cancellationToken);
+                    await SendErrorAsync(commandChannel, null, code, "The browser bridge message was rejected.", cancellationToken);
                     continue;
                 }
 
@@ -57,7 +57,7 @@ public sealed class BrowserIntegrationConnectionHandler(
                 if (!parsed.IsValid)
                 {
                     await SendErrorAsync(
-                        socket,
+                        commandChannel,
                         parsed.Error!.RequestMessageId,
                         parsed.Error.Code,
                         parsed.Error.Message,
@@ -70,7 +70,7 @@ public sealed class BrowserIntegrationConnectionHandler(
                     if (parsed.Message is not BrowserHelloMessage hello)
                     {
                         await SendErrorAsync(
-                            socket,
+                            commandChannel,
                             parsed.Message!.MessageId,
                             "authentication_required",
                             "Authenticate with browser_hello first.",
@@ -81,7 +81,7 @@ public sealed class BrowserIntegrationConnectionHandler(
                     if (hello.ProtocolVersion != BrowserIntegrationProtocol.Version)
                     {
                         await SendErrorAsync(
-                            socket,
+                            commandChannel,
                             hello.MessageId,
                             "unsupported_protocol_version",
                             "The browser bridge protocol version is not supported.",
@@ -92,7 +92,7 @@ public sealed class BrowserIntegrationConnectionHandler(
                     if (!authenticationAttemptLimiter.TryBeginAttempt(out _))
                     {
                         logger.LogWarning("Firefox browser bridge authentication was rate limited");
-                        await SendErrorAsync(socket, hello.MessageId, "authentication_rate_limited", "Too many pairing attempts.", cancellationToken);
+                        await SendErrorAsync(commandChannel, hello.MessageId, "authentication_rate_limited", "Too many pairing attempts.", cancellationToken);
                         await CloseAuthenticationFailureAsync(socket, cancellationToken);
                         break;
                     }
@@ -111,7 +111,7 @@ public sealed class BrowserIntegrationConnectionHandler(
                             BrowserAuthenticationStatus.Expired => "authentication_expired",
                             _ => "authentication_failed"
                         };
-                        await SendErrorAsync(socket, hello.MessageId, code, "Browser bridge authentication failed.", cancellationToken);
+                        await SendErrorAsync(commandChannel, hello.MessageId, code, "Browser bridge authentication failed.", cancellationToken);
                         await CloseAuthenticationFailureAsync(socket, cancellationToken);
                         break;
                     }
@@ -121,12 +121,13 @@ public sealed class BrowserIntegrationConnectionHandler(
                     await integrationService.BeginConnectionAsync(
                         connectionId,
                         hello.Identity,
+                        commandChannel,
                         cancellationToken);
-                    await SendAsync(
-                        socket,
+                    await commandChannel.SendEnvelopeAsync(
                         "browser_bridge_ready",
                         new { protocolVersion = BrowserIntegrationProtocol.Version },
                         cancellationToken);
+                    commandChannel.MarkReady();
                     logger.LogInformation("Firefox browser bridge authenticated");
                     continue;
                 }
@@ -138,10 +139,14 @@ public sealed class BrowserIntegrationConnectionHandler(
                         update.Observation,
                         cancellationToken);
                 }
+                else if (parsed.Message is BrowserCommandResultMessage commandResult)
+                {
+                    commandChannel.TryComplete(commandResult.Result);
+                }
                 else
                 {
                     await SendErrorAsync(
-                        socket,
+                        commandChannel,
                         parsed.Message!.MessageId,
                         "already_authenticated",
                         "The browser bridge is already authenticated.",
@@ -159,6 +164,7 @@ public sealed class BrowserIntegrationConnectionHandler(
         }
         finally
         {
+            commandChannel.FailPending();
             if (authenticated)
             {
                 await integrationService.EndConnectionAsync(connectionId, CancellationToken.None);
@@ -169,28 +175,12 @@ public sealed class BrowserIntegrationConnectionHandler(
     }
 
     private static Task SendErrorAsync(
-        WebSocket socket,
+        IBrowserExtensionCommandChannel channel,
         Guid? requestMessageId,
         string code,
         string message,
         CancellationToken cancellationToken) =>
-        SendAsync(socket, "error", new { requestMessageId, code, message }, cancellationToken);
-
-    private static async Task SendAsync<TPayload>(
-        WebSocket socket,
-        string type,
-        TPayload payload,
-        CancellationToken cancellationToken)
-    {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            type,
-            messageId = Guid.NewGuid(),
-            timestampUtc = DateTimeOffset.UtcNow,
-            payload
-        }, ProtocolJson.SerializerOptions);
-        await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
-    }
+        channel.SendEnvelopeAsync("error", new { requestMessageId, code, message }, cancellationToken);
 
     private static async Task CloseAuthenticationFailureAsync(
         WebSocket socket,

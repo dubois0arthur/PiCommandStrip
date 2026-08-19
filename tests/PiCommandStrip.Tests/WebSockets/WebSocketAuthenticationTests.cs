@@ -175,6 +175,7 @@ public sealed class WebSocketAuthenticationTests
             new ForegroundStateStore(timeProvider),
             contextCoordinator,
             contextCatalog,
+            new BrowserSearchCatalog(new BrowserIntegrationOptions()),
             new StubMediaSessionService(timeProvider),
             new StubAudioMixerService(timeProvider),
             new StubSpotifyService(timeProvider),
@@ -359,6 +360,7 @@ public sealed class WebSocketAuthenticationTests
         public Task BeginConnectionAsync(
             Guid connectionId,
             BrowserIdentity identity,
+            IBrowserExtensionCommandChannel commandChannel,
             CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task ApplyObservationAsync(
@@ -372,6 +374,11 @@ public sealed class WebSocketAuthenticationTests
         public Task SetBrowserContextActiveAsync(
             bool isActive,
             CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<BrowserExtensionCommandResult> ExecuteExtensionCommandAsync(
+            BrowserExtensionCommand command,
+            CancellationToken cancellationToken) => Task.FromResult(
+                new BrowserExtensionCommandResult(Guid.Empty, false, "bridge_disconnected"));
     }
 
     private sealed class StubSpotifyService(TimeProvider timeProvider) : ISpotifyService

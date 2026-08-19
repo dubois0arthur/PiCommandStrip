@@ -439,6 +439,7 @@ public sealed class WebSocketClientConnection(
             state.HostName,
             state.PageTitle,
             !string.IsNullOrEmpty(state.SelectedText),
+            state.SelectedText,
             state.CanGoBack,
             state.CanGoForward,
             state.LastUpdatedUtc);

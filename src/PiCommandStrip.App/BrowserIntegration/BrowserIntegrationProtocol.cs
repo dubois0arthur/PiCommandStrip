@@ -5,10 +5,12 @@ namespace PiCommandStrip.App.BrowserIntegration;
 
 public static class BrowserIntegrationProtocol
 {
-    public const string Version = "1";
+    public const string Version = "2";
     public const int MaximumMessageSizeBytes = 8 * 1024;
     public const string HelloType = "browser_hello";
     public const string StateUpdateType = "browser_state_update";
+    public const string CommandType = "browser_command";
+    public const string CommandResultType = "browser_command_result";
 }
 
 public abstract record BrowserIntegrationClientMessage(
@@ -26,6 +28,11 @@ public sealed record BrowserStateUpdateMessage(
     Guid MessageId,
     DateTimeOffset TimestampUtc,
     BrowserTabObservation Observation) : BrowserIntegrationClientMessage(MessageId, TimestampUtc);
+
+public sealed record BrowserCommandResultMessage(
+    Guid MessageId,
+    DateTimeOffset TimestampUtc,
+    BrowserExtensionCommandResult Result) : BrowserIntegrationClientMessage(MessageId, TimestampUtc);
 
 public sealed record BrowserIntegrationParseError(
     string Code,
@@ -79,6 +86,8 @@ public sealed class BrowserIntegrationMessageParser
                     ParseHello(messageId, timestampUtc, payload),
                 BrowserIntegrationProtocol.StateUpdateType =>
                     ParseStateUpdate(messageId, timestampUtc, payload),
+                BrowserIntegrationProtocol.CommandResultType =>
+                    ParseCommandResult(messageId, timestampUtc, payload),
                 _ => BrowserIntegrationParseResult.Failure(
                     "unknown_message_type",
                     "The browser bridge message type is not supported.",
@@ -91,6 +100,28 @@ public sealed class BrowserIntegrationMessageParser
                 "malformed_json",
                 "The message is not valid JSON.");
         }
+    }
+
+    private static BrowserIntegrationParseResult ParseCommandResult(
+        Guid messageId,
+        DateTimeOffset timestampUtc,
+        JsonElement payload)
+    {
+        if (!HasExactlyProperties(payload, "requestMessageId", "succeeded", "code") ||
+            !TryGuid(payload, "requestMessageId", out var requestMessageId) ||
+            !TryRequiredBoolean(payload, "succeeded", out var succeeded) ||
+            !TryBoundedString(payload, "code", 64, out var code))
+        {
+            return BrowserIntegrationParseResult.Failure(
+                "invalid_payload",
+                "The browser command result payload is invalid.",
+                messageId);
+        }
+
+        return BrowserIntegrationParseResult.Success(new BrowserCommandResultMessage(
+            messageId,
+            timestampUtc,
+            new BrowserExtensionCommandResult(requestMessageId, succeeded, code)));
     }
 
     private static BrowserIntegrationParseResult ParseHello(
@@ -252,6 +283,22 @@ public sealed class BrowserIntegrationMessageParser
         }
 
         if (property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            return false;
+        }
+
+        result = property.GetBoolean();
+        return true;
+    }
+
+    private static bool TryRequiredBoolean(
+        JsonElement value,
+        string propertyName,
+        out bool result)
+    {
+        result = false;
+        if (!value.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
         {
             return false;
         }

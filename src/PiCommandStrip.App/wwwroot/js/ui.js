@@ -1,10 +1,11 @@
-import { AudioMixerController } from "./audio-mixer.js?v=15";
+import { AudioMixerController } from "./audio-mixer.js?v=16";
 import {
     buildContextComposition,
     ContextCompositionController
-} from "./context-composition.js?v=15";
-import { NowPlayingController } from "./now-playing.js?v=15";
-import { SpotifyControlsController } from "./spotify-controls.js?v=15";
+} from "./context-composition.js?v=16";
+import { NowPlayingController } from "./now-playing.js?v=16";
+import { ResearchWorkspaceController } from "./research-workspace.js?v=16";
+import { SpotifyControlsController } from "./spotify-controls.js?v=16";
 
 const elements = {
     activityAnnouncer: document.querySelector("#activity-announcer"),
@@ -61,6 +62,15 @@ const elements = {
     offlineState: document.querySelector("#offline-state"),
     pingButton: document.querySelector("#ping-button"),
     processId: document.querySelector("#process-id"),
+    researchAudioCapabilities: document.querySelector("#research-audio-capabilities"),
+    researchDomain: document.querySelector("#research-domain"),
+    researchIntegrationStatus: document.querySelector("#research-integration-status"),
+    researchPageActionGrid: document.querySelector("#research-page-action-grid"),
+    researchSearchActionGrid: document.querySelector("#research-search-action-grid"),
+    researchSelectionPanel: document.querySelector("#research-selection-panel"),
+    researchSelectionPreview: document.querySelector("#research-selection-preview"),
+    researchTitle: document.querySelector("#research-title"),
+    researchWorkspace: document.querySelector("#research-workspace"),
     viewportDimensions: document.querySelector("#viewport-dimensions"),
     workspace: document.querySelector("#workspace"),
     workspaceDescription: document.querySelector("#workspace-description"),
@@ -93,9 +103,20 @@ const audioMixer = new AudioMixerController({
 const contextComposition = new ContextCompositionController({
     contextRoot: elements.contextAudioCapabilities,
     expandedRoot: nowPlaying.expandedAudioAccessoryRoot,
+    researchRoot: elements.researchAudioCapabilities,
     template: elements.contextVolumeTemplate,
     requestCommand: request => audioMixer.requestCommand(request),
     onNavigateAudio: () => elements.navAudio.click()
+});
+const researchWorkspace = new ResearchWorkspaceController({
+    root: elements.researchWorkspace,
+    title: elements.researchTitle,
+    domain: elements.researchDomain,
+    status: elements.researchIntegrationStatus,
+    pageActionGrid: elements.researchPageActionGrid,
+    selectionPanel: elements.researchSelectionPanel,
+    selectionPreview: elements.researchSelectionPreview,
+    searchActionGrid: elements.researchSearchActionGrid
 });
 
 let connected = false;
@@ -314,13 +335,16 @@ function renderWorkspace() {
     });
     const presentation = connected ? composition.mediaPresentation : "hidden";
     const audioActive = latestContextState.contextId === "audio";
+    const researchActive = latestContextState.contextId === "browser";
     elements.appShell.dataset.context = latestContextState.contextId || "default";
     elements.appShell.dataset.mediaPresentation = presentation;
+    elements.appShell.dataset.mediaEmphasis = composition.mediaEmphasis || "normal";
     elements.contextWorkspace.dataset.mode = composition.workspaceMode;
     nowPlaying.setPresentation(presentation);
     contextComposition.render(composition);
     elements.audioWorkspace.hidden = !audioActive;
-    elements.contextWorkspace.hidden = presentation === "expanded" || audioActive;
+    elements.researchWorkspace.hidden = !researchActive;
+    elements.contextWorkspace.hidden = presentation === "expanded" || audioActive || researchActive;
     workspaceContent(composition);
 }
 
@@ -407,6 +431,10 @@ export const dashboardUi = {
 
     bindSpotifyControls(callback) {
         spotifyControls.bindCommands(callback);
+    },
+
+    bindBrowserControls(callback) {
+        researchWorkspace.bindCommands(callback);
     },
 
     bindPing(callback) {
@@ -498,6 +526,7 @@ export const dashboardUi = {
 
     renderBrowserState(state) {
         latestBrowserState = state;
+        researchWorkspace.setBrowserState(state);
         renderWorkspace();
     },
 
@@ -520,6 +549,10 @@ export const dashboardUi = {
 
         elements.contextSelection.replaceChildren(...options);
         elements.contextSelection.value = lastContextSelection;
+    },
+
+    setAvailableBrowserSearchActions(actions = []) {
+        researchWorkspace.setSearchActions(actions);
     },
 
     setContextSelectionPending() {
@@ -576,6 +609,20 @@ export const dashboardUi = {
         elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
     },
 
+    setBrowserCommandPending(commandId) {
+        researchWorkspace.setPending(commandId);
+        showFeedback("Sending browser action…", "neutral", 0);
+    },
+
+    showBrowserCommandResult(result) {
+        researchWorkspace.clearPending();
+        showFeedback(
+            result.message,
+            result.succeeded ? "success" : "failure",
+            result.succeeded ? 2200 : 7000);
+        elements.activityAnnouncer.textContent = `${result.commandId}: ${result.message}`;
+    },
+
     showCommandResult(result) {
         showFeedback(result.message, result.succeeded ? "success" : "failure", result.succeeded ? 2200 : 7000);
         elements.activityAnnouncer.textContent = result.message;
@@ -596,6 +643,7 @@ export const dashboardUi = {
         nowPlaying.setConnected(connected);
         audioMixer.setConnected(connected);
         contextComposition.setConnected(connected);
+        researchWorkspace.setConnected(connected);
         spotifyControls.setConnected(connected);
         elements.appShell.dataset.connection = state;
         elements.connectionIndicator.dataset.state = state;

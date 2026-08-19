@@ -4,9 +4,12 @@ public sealed record ServerHelloPayload(
     string ApplicationName,
     string ProtocolVersion,
     int MaximumMessageSizeBytes,
-    IReadOnlyList<ContextDescriptorPayload> AvailableContexts);
+    IReadOnlyList<ContextDescriptorPayload> AvailableContexts,
+    IReadOnlyList<BrowserSearchActionPayload> AvailableBrowserSearchActions);
 
 public sealed record ContextDescriptorPayload(string ContextId, string DisplayName);
+
+public sealed record BrowserSearchActionPayload(string ActionId, string DisplayName);
 
 public sealed record PcStatePayload(
     bool IsAvailable,
@@ -110,6 +113,7 @@ public sealed record BrowserStatePayload(
     string? HostName,
     string? PageTitle,
     bool HasSelectedText,
+    string? SelectedText,
     bool? CanGoBack,
     bool? CanGoForward,
     DateTimeOffset LastUpdatedUtc);
@@ -145,7 +149,8 @@ public sealed record CommandRequestPayload(
     string? DeviceId = null,
     bool? IsSaved = null,
     bool? ShuffleEnabled = null,
-    string? RepeatState = null);
+    string? RepeatState = null,
+    string? SearchActionId = null);
 
 public sealed record ContextSelectionRequestPayload(string Mode, string? ContextId);
 

@@ -6,9 +6,11 @@ public static class BrowserIntegrationServiceExtensions
 {
     public static IServiceCollection AddBrowserIntegration(
         this IServiceCollection services,
-        BrowserIntegrationConfiguration configuration)
+        BrowserIntegrationConfiguration configuration,
+        Configuration.BrowserIntegrationOptions options)
     {
         services.AddSingleton(configuration);
+        services.AddSingleton(new BrowserSearchCatalog(options));
         services.AddSingleton<BrowserStateNormalizer>();
         services.AddSingleton<BrowserStateStore>();
         services.AddSingleton<BrowserIntegrationAuthenticationService>();
@@ -17,6 +19,7 @@ public static class BrowserIntegrationServiceExtensions
         services.AddSingleton<BrowserIntegrationService>();
         services.AddSingleton<IBrowserIntegrationService>(services =>
             services.GetRequiredService<BrowserIntegrationService>());
+        services.AddSingleton<IBrowserCommandService, BrowserCommandService>();
         services.AddTransient<BrowserIntegrationConnectionHandler>();
         return services;
     }

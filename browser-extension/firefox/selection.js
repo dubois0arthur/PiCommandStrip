@@ -1,23 +1,36 @@
 const port = browser.runtime.connect({ name: "selection-observer" });
 let debounceTimer;
-let lastSelection;
+let lastPageState;
 
-function publishSelection() {
+function publishPageState() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
         const selectedText = window.getSelection()?.toString().trim() || null;
         const bounded = selectedText?.slice(0, 1000) || null;
-        if (bounded === lastSelection) return;
-        lastSelection = bounded;
-        port.postMessage({ type: "selection_changed", selectedText: bounded });
+        const navigationState = typeof navigation !== "undefined" ? navigation : null;
+        const pageState = {
+            selectedText: bounded,
+            canGoBack: typeof navigationState?.canGoBack === "boolean" ? navigationState.canGoBack : null,
+            canGoForward: typeof navigationState?.canGoForward === "boolean" ? navigationState.canGoForward : null
+        };
+        const meaning = JSON.stringify(pageState);
+        if (meaning === lastPageState) return;
+        lastPageState = meaning;
+        port.postMessage({ type: "page_state_changed", ...pageState });
     }, 150);
 }
 
-document.addEventListener("selectionchange", publishSelection, { passive: true });
+document.addEventListener("selectionchange", publishPageState, { passive: true });
+if (typeof navigation !== "undefined") {
+    navigation.addEventListener("currententrychange", publishPageState);
+}
 window.addEventListener("pagehide", () => {
     clearTimeout(debounceTimer);
-    if (lastSelection) {
-        port.postMessage({ type: "selection_changed", selectedText: null });
-    }
+    port.postMessage({
+        type: "page_state_changed",
+        selectedText: null,
+        canGoBack: null,
+        canGoForward: null
+    });
 });
-publishSelection();
+publishPageState();

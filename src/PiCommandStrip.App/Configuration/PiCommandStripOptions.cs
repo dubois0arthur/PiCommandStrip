@@ -60,6 +60,16 @@ public sealed class BrowserIntegrationOptions
     public int Port { get; init; } = 5078;
 
     public string Token { get; init; } = string.Empty;
+
+    public Dictionary<string, BrowserSearchActionOptions> SearchActions { get; init; } =
+        new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class BrowserSearchActionOptions
+{
+    public string DisplayName { get; init; } = string.Empty;
+
+    public string UrlTemplate { get; init; } = string.Empty;
 }
 
 public sealed record ValidatedNetworkOptions(bool LanEnabled, IPAddress ListenAddress, int Port)

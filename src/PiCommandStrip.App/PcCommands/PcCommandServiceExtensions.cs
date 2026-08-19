@@ -1,4 +1,5 @@
 using PiCommandStrip.App.AudioMixer;
+using PiCommandStrip.App.BrowserIntegration;
 using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.Spotify;
 
@@ -66,6 +67,13 @@ public static class PcCommandServiceExtensions
             new SpotifyCommandHandler(
                 PcCommandIds.SpotifySetRepeat,
                 services.GetRequiredService<ISpotifyService>()));
+        foreach (var commandId in PcCommandIds.BrowserCommands)
+        {
+            services.AddSingleton<IPcCommandHandler>(services =>
+                new BrowserCommandHandler(
+                    commandId,
+                    services.GetRequiredService<IBrowserCommandService>()));
+        }
         services.AddSingleton<IPcCommandDispatcher, PcCommandDispatcher>();
 
         return services;

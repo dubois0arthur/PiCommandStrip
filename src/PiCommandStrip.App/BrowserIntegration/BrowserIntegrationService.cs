@@ -8,6 +8,7 @@ public sealed class BrowserIntegrationService(
 {
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private Guid? _activeConnectionId;
+    private IBrowserExtensionCommandChannel? _activeCommandChannel;
     private bool _browserContextActive;
 
     public BrowserState Current => store.Current;
@@ -15,12 +16,15 @@ public sealed class BrowserIntegrationService(
     public async Task BeginConnectionAsync(
         Guid connectionId,
         BrowserIdentity identity,
+        IBrowserExtensionCommandChannel commandChannel,
         CancellationToken cancellationToken)
     {
         await _stateLock.WaitAsync(cancellationToken);
         try
         {
             _activeConnectionId = connectionId;
+            _activeCommandChannel?.FailPending();
+            _activeCommandChannel = commandChannel;
             await PublishIfChangedAsync(
                 normalizer.Connected(identity, timeProvider.GetUtcNow()),
                 cancellationToken);
@@ -29,6 +33,26 @@ public sealed class BrowserIntegrationService(
         {
             _stateLock.Release();
         }
+    }
+
+    public async Task<BrowserExtensionCommandResult> ExecuteExtensionCommandAsync(
+        BrowserExtensionCommand command,
+        CancellationToken cancellationToken)
+    {
+        IBrowserExtensionCommandChannel? channel;
+        await _stateLock.WaitAsync(cancellationToken);
+        try
+        {
+            channel = store.Current.IsConnected ? _activeCommandChannel : null;
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+
+        return channel is null
+            ? new BrowserExtensionCommandResult(Guid.Empty, false, "bridge_disconnected")
+            : await channel.ExecuteAsync(command, cancellationToken);
     }
 
     public async Task ApplyObservationAsync(
@@ -94,6 +118,8 @@ public sealed class BrowserIntegrationService(
             }
 
             _activeConnectionId = null;
+            _activeCommandChannel?.FailPending();
+            _activeCommandChannel = null;
             await PublishIfChangedAsync(
                 BrowserState.Disconnected(timeProvider.GetUtcNow()),
                 cancellationToken);

@@ -2,10 +2,12 @@
   "manifest_version": 3,
   "name": "PiCommandStrip Firefox Bridge",
   "version": "0.1.0",
-  "description": "Shares the active Firefox tab and selected-text presence with the local PiCommandStrip Windows host.",
+  "description": "Shares concise Firefox research context with the local PiCommandStrip Windows host and executes fixed browser actions.",
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "sessions",
+    "clipboardWrite"
   ],
   "background": {
     "scripts": [

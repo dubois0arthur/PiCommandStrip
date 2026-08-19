@@ -1,5 +1,5 @@
-import { DashboardSocket } from "./protocol.js?v=15";
-import { dashboardUi } from "./ui.js?v=15";
+import { DashboardSocket } from "./protocol.js?v=16";
+import { dashboardUi } from "./ui.js?v=16";
 
 const automaticPingIntervalMilliseconds = 10000;
 const tokenStorageKey = "pi-command-strip-token";
@@ -19,7 +19,13 @@ function readLayoutFixture() {
 const layoutFixture = readLayoutFixture();
 
 function applyLayoutFixture(state) {
-    if (["no-media", "default-no-media"].includes(layoutFixture)) {
+    if ([
+        "no-media",
+        "default-no-media",
+        "browser-selected",
+        "browser-disconnected",
+        "browser-long"
+    ].includes(layoutFixture)) {
         return {
             hasActiveSession: false,
             playbackState: "none",
@@ -88,6 +94,9 @@ function applyContextFixture(state) {
         "default-no-media": ["default", "Default", "explorer", "Documents"],
         "browser-owned": ["browser", "Browser / Research", "firefox", "A practical browser media session — YouTube"],
         "browser-foreign": ["browser", "Browser / Research", "firefox", "PiCommandStrip research — Mozilla Firefox"],
+        "browser-selected": ["browser", "Browser / Research", "firefox", "Research notes — Mozilla Firefox"],
+        "browser-disconnected": ["browser", "Browser / Research", "firefox", "Mozilla Firefox"],
+        "browser-long": ["browser", "Browser / Research", "firefox", "Long research page — Mozilla Firefox"],
         gaming: ["gaming", "Gaming", "cyberpunk2077", "Cyberpunk 2077"]
     };
     const fixture = contextFixtures[layoutFixture];
@@ -116,6 +125,9 @@ function applyAudioFixture(state) {
         "default-no-media",
         "browser-owned",
         "browser-foreign",
+        "browser-selected",
+        "browser-disconnected",
+        "browser-long",
         "gaming"
     ]);
     if (!audioFixtures.has(layoutFixture)) {
@@ -211,8 +223,23 @@ function applySpotifyFixture(state) {
 }
 
 function applyBrowserFixture(state) {
-    if (!["browser-owned", "browser-foreign"].includes(layoutFixture)) {
+    if (!["browser-owned", "browser-foreign", "browser-selected", "browser-disconnected", "browser-long"].includes(layoutFixture)) {
         return state;
+    }
+
+    if (layoutFixture === "browser-disconnected") {
+        return {
+            connectionState: "disconnected",
+            activeTabId: null,
+            url: null,
+            hostName: null,
+            pageTitle: null,
+            hasSelectedText: false,
+            selectedText: null,
+            canGoBack: null,
+            canGoForward: null,
+            lastUpdatedUtc: new Date().toISOString()
+        };
     }
 
     return {
@@ -225,10 +252,15 @@ function applyBrowserFixture(state) {
         hostName: "developer.mozilla.org",
         pageTitle: layoutFixture === "browser-owned"
             ? "A practical browser media session — YouTube"
-            : "PiCommandStrip research — Mozilla Firefox",
-        hasSelectedText: layoutFixture === "browser-foreign",
-        canGoBack: null,
-        canGoForward: null,
+            : layoutFixture === "browser-long"
+                ? "An intentionally enormous research page title about browser extensions, privacy, event-driven systems, and touchscreen interaction that must truncate cleanly"
+                : "PiCommandStrip research — Mozilla Firefox",
+        hasSelectedText: ["browser-foreign", "browser-selected", "browser-long"].includes(layoutFixture),
+        selectedText: ["browser-foreign", "browser-selected", "browser-long"].includes(layoutFixture)
+            ? "A deliberately long selected passage with punctuation, multiple ideas, and enough content to prove that the touchscreen preview is strictly bounded rather than duplicating an entire paragraph from the main monitor. Additional words must be truncated safely."
+            : null,
+        canGoBack: true,
+        canGoForward: layoutFixture !== "browser-owned",
         lastUpdatedUtc: new Date().toISOString()
     };
 }
@@ -331,11 +363,14 @@ const dashboardSocket = new DashboardSocket({
             dashboardUi.showAudioCommandResult(result);
         } else if (result.commandId.startsWith("spotify.")) {
             dashboardUi.showSpotifyCommandResult(result);
+        } else if (result.commandId.startsWith("browser.")) {
+            dashboardUi.showBrowserCommandResult(result);
         }
     },
 
     onServerHello(server) {
         dashboardUi.setAvailableContexts(server.availableContexts);
+        dashboardUi.setAvailableBrowserSearchActions(server.availableBrowserSearchActions);
         dashboardUi.setProtocolVersion(server.protocolVersion);
     },
 
@@ -374,6 +409,12 @@ dashboardUi.bindAudioControls(request => dashboardSocket.sendAudioCommand(
 dashboardUi.bindSpotifyControls(request => dashboardSocket.sendSpotifyCommand(
     request.commandId,
     request));
+
+dashboardUi.bindBrowserControls(request => {
+    if (dashboardSocket.sendBrowserCommand(request.commandId, request)) {
+        dashboardUi.setBrowserCommandPending(request.commandId);
+    }
+});
 
 dashboardUi.bindAuthentication(token => {
     if (!token) {

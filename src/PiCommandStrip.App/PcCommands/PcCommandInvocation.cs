@@ -9,4 +9,5 @@ public sealed record PcCommandInvocation(
     string? DeviceId = null,
     bool? IsSaved = null,
     bool? ShuffleEnabled = null,
-    string? RepeatState = null);
+    string? RepeatState = null,
+    string? SearchActionId = null);
