@@ -103,6 +103,42 @@ public sealed record ApplicationAudioPayload(
     bool HasMixedVolume,
     bool HasMixedMute);
 
+public sealed record SystemTelemetryPayload(
+    string Status,
+    CpuTelemetryPayload? Cpu,
+    GpuTelemetryPayload? Gpu,
+    MemoryTelemetryPayload? Memory,
+    string TemperatureStatus,
+    long Revision,
+    DateTimeOffset LastUpdatedUtc,
+    SystemTelemetryDiagnosticsPayload Diagnostics);
+
+public sealed record CpuTelemetryPayload(
+    string? Name,
+    double? UtilizationPercent,
+    double? TemperatureCelsius,
+    string TemperatureStatus);
+
+public sealed record GpuTelemetryPayload(
+    string? Identifier,
+    string? Name,
+    double? UtilizationPercent,
+    double? TemperatureCelsius,
+    long? MemoryUsedBytes,
+    long? MemoryTotalBytes,
+    string TemperatureStatus);
+
+public sealed record MemoryTelemetryPayload(long? UsedBytes, long? TotalBytes);
+
+public sealed record SystemTelemetryDiagnosticsPayload(
+    string ProviderName,
+    string ProviderStatus,
+    string? CpuTemperatureSensor,
+    string? GpuIdentifier,
+    string? GpuName,
+    string? GpuTemperatureSensor,
+    IReadOnlyList<string> UnavailableReasons);
+
 public sealed record BrowserStatePayload(
     string ConnectionState,
     string? BrowserType,

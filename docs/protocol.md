@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-PiCommandStrip protocol version 13 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
+PiCommandStrip protocol version 14 is a small JSON message protocol carried over the native WebSocket endpoint at `/ws`. It provides a stable boundary between the dashboard and the Windows host without allowing browser data to become executable behavior.
 
-This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, optional Spotify enrichment state, optional Firefox research state/actions, automatic/manual context selection, structured errors, and fixed allowlisted commands. Version 13 adds the local Research Inbox's fixed Save/Open commands and lightweight change state; bounded inbox content is retrieved through the authenticated HTTP API rather than embedded in WebSocket messages.
+This version implements connection greeting, validation, ping/pong, foreground-window, resolved-context, Windows system media state, normalized Windows audio-mixer state, normalized system telemetry, optional Spotify enrichment state, optional Firefox research state/actions, automatic/manual context selection, structured errors, and fixed allowlisted commands. Version 14 adds the separate `system_telemetry` retained state. Version 13 added the local Research Inbox's fixed Save/Open commands and lightweight change state; bounded inbox content is still retrieved through the authenticated HTTP API rather than embedded in WebSocket messages.
 
 ## Transport
 
@@ -52,17 +52,17 @@ Sent by the dashboard immediately after the WebSocket opens.
   "timestampUtc": "2026-08-05T12:00:00.000Z",
   "payload": {
     "clientName": "browser-dashboard",
-    "protocolVersion": "13",
+    "protocolVersion": "14",
     "authenticationToken": "<32-byte Base64 token>"
   }
 }
 ```
 
 - `clientName` is required, non-blank, and at most 100 characters.
-- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `13`.
+- `protocolVersion` is required. The server returns `unsupported_protocol_version` when it is not `14`.
 - `authenticationToken` must match the 32-byte Base64 pre-shared token configured outside Git on the Windows host. A missing, incorrect, expired, or rate-limited attempt receives a structured error and does not enable state or commands.
 
-The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 13 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token, transient selected-text previews, and Research Inbox HTTP responses; use only a trusted Private network and do not expose the port to the internet.
+The token is never logged or embedded in frontend source. The browser obtains it from the user and keeps it in `sessionStorage`. Because version 14 currently uses unencrypted HTTP/WebSocket transport, a LAN observer can read the token, transient selected-text previews, Research Inbox HTTP responses, and telemetry state; use only a trusted Private network and do not expose the port to the internet.
 
 ### `ping`
 
@@ -247,7 +247,7 @@ The first message sent by the server after accepting a connection.
   "timestampUtc": "2026-08-05T12:00:00.0000000+00:00",
   "payload": {
     "applicationName": "PiCommandStrip.App",
-    "protocolVersion": "13",
+    "protocolVersion": "14",
     "maximumMessageSizeBytes": 16384,
     "availableContexts": [
       { "contextId": "default", "displayName": "Default" },
@@ -442,13 +442,69 @@ Reports the normalized state of the default multimedia render endpoint and its u
 }
 ```
 
-`outputDevices` contains the currently usable Windows render endpoints. `deviceId` is the stable opaque Core Audio endpoint ID, `friendlyName` is display text, `state` is currently `active` for a usable entry, and exactly the observed Multimedia default is marked with `isDefault`. Device IDs are not filesystem paths and the selector never treats them as executable input. Application `volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. Application `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of version 13.
+`outputDevices` contains the currently usable Windows render endpoints. `deviceId` is the stable opaque Core Audio endpoint ID, `friendlyName` is display text, `state` is currently `active` for a usable entry, and exactly the observed Multimedia default is marked with `isDefault`. Device IDs are not filesystem paths and the selector never treats them as executable input. Application `volume` values are finite normalized scalars from `0.0` through `1.0`, rounded to three decimal places. Application `state` is `active`, `inactive`, or `unknown`. `processIds` can be empty or contain several processes; `processName` is nullable. `displayName` always has a deliberate fallback. Peak level is not part of the current protocol.
 
 `applicationId` is a server-generated SHA-256 identifier for the grouping key. It is stable while the grouping evidence is stable and never exposes a process path or raw Windows session identifier. `sessionCount` shows how many underlying Windows controls contribute to the entry. `hasMixedVolume` and `hasMixedMute` indicate that those controls disagree. The reported grouped volume is the maximum member scalar, and grouped `isMuted` is true only when every member is muted.
 
 When no default output is available, `isAvailable` is `false`, `outputDevice` is `null`, and `applications` is empty. `outputDevices` can still contain active endpoints that may establish a new default. `revision` starts at zero and increases monotonically for this host process whenever the normalized meaning changes, including endpoint arrival/removal and default-role changes. `lastUpdatedUtc` records that meaningful observation; timestamp-only samples do not produce a message.
 
-Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Version 13 commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative. The device selector shows processing feedback but does not mark a choice current until an authoritative state identifies it as the default.
+Audio state is global and independent of both `media_state` and `context_state`. It can describe many applications while media state describes only the session Windows currently prefers. Current commands reference this state but do not make it client-owned: later `audio_state` messages remain authoritative. The device selector shows processing feedback but does not mark a choice current until an authoritative state identifies it as the default.
+
+### `system_telemetry`
+
+Reports normalized, read-only hardware telemetry as a state stream separate from audio, media, browser, and context messages. It is sent after `audio_state` when a client authenticates and then at most at the configured collection cadence when normalized meaning changes.
+
+```json
+{
+  "type": "system_telemetry",
+  "messageId": "02da68ce-54ec-46d6-94d2-cb597fca00d9",
+  "timestampUtc": "2026-08-19T12:00:03.0800000+00:00",
+  "payload": {
+    "status": "partial",
+    "cpu": {
+      "name": "AMD Ryzen 7 9700X",
+      "utilizationPercent": 18.2,
+      "temperatureCelsius": null,
+      "temperatureStatus": "unavailable"
+    },
+    "gpu": {
+      "identifier": "/gpu-amd/5",
+      "name": "AMD Radeon RX 6800",
+      "utilizationPercent": 92.0,
+      "temperatureCelsius": 67.0,
+      "memoryUsedBytes": 4294967296,
+      "memoryTotalBytes": 17179869184,
+      "temperatureStatus": "normal"
+    },
+    "memory": {
+      "usedBytes": 19327352832,
+      "totalBytes": 34359738368
+    },
+    "temperatureStatus": "normal",
+    "revision": 14,
+    "lastUpdatedUtc": "2026-08-19T12:00:03.0790000+00:00",
+    "diagnostics": {
+      "providerName": "LibreHardwareMonitor 0.9.6 + Windows native metrics",
+      "providerStatus": "partial",
+      "cpuTemperatureSensor": null,
+      "gpuIdentifier": "/gpu-amd/5",
+      "gpuName": "AMD Radeon RX 6800",
+      "gpuTemperatureSensor": "GPU Core",
+      "unavailableReasons": [
+        "CPU package temperature sensor is unavailable."
+      ]
+    }
+  }
+}
+```
+
+`status` is `available`, `partial`, or `unavailable`. CPU/GPU/memory objects and every metric inside them are nullable; an unavailable sensor is never replaced with zero. CPU utilization comes from Windows system timing, physical RAM from Windows memory status, and temperatures/GPU utilization/VRAM from the isolated hardware provider. Percentages are normalized to `0` through `100`. Memory values are bytes. LibreHardwareMonitor `SmallData` values are converted from MiB (`2^20` bytes).
+
+CPU temperature selection prefers a package/aggregate sensor (`CPU Package`, Ryzen `Core (Tctl/Tdie)`, then documented aggregate fallbacks). GPU selection first honors an exact configured identifier/name; otherwise it prefers an adapter with dedicated-memory evidence and then discrete AMD/NVIDIA hardware. GPU temperature accepts only `GPU Core`, never hotspot or memory-junction values. `identifier` is provider-local diagnostic identity, not a filesystem path or command target.
+
+`temperatureStatus` and each component status are `normal`, `elevated`, `warning`, or `unavailable`. They are presentation bands based on configured thresholds, not a claim that hardware is dangerous. Default CPU thresholds are 75/90 °C and GPU thresholds are 75/85 °C; all are host-adjustable.
+
+The provider samples at 1 Hz by default. Values are rounded/normalized and the store plus each connection suppress meaning-identical states, so a timestamp-only refresh is not sent. A provider failure yields partial/native-only or unavailable state and later samples retry. The message is read-only and adds no command.
 
 ### `spotify_state`
 
@@ -626,10 +682,10 @@ The Notepad launcher combines the server's trusted Windows system directory with
 1. The browser requests an HTTP upgrade at `/ws`.
 2. ASP.NET Core rejects ordinary HTTP requests to that path with status 400.
 3. After a successful upgrade, the server sends `server_hello`.
-4. The dashboard sends `client_hello` with protocol version 13, its fresh UTC timestamp, and the configured token.
+4. The dashboard sends `client_hello` with protocol version 14, its fresh UTC timestamp, and the configured token.
 5. The server checks rate limits, protocol compatibility, timestamp freshness, and the token using constant-time comparison.
-6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, `audio_state`, `spotify_state`, `browser_state`, and `research_inbox_state` snapshots in that order.
-7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, audio, Spotify, browser, and lightweight inbox changes are broadcast independently.
+6. Only after successful authentication does the server mark the connection ready and send retained `pc_state`, `context_state`, `media_state`, `audio_state`, `system_telemetry`, `spotify_state`, `browser_state`, and `research_inbox_state` snapshots in that order.
+7. The authenticated dashboard may send `ping`, `context_selection_request`, or `command_request` messages, while meaningful foreground, context, media, audio, system telemetry, Spotify, browser, and lightweight inbox changes are broadcast independently.
 8. The server reads complete messages, validates them, and dispatches only recognized typed records.
 9. Either peer may initiate the normal WebSocket close handshake.
 10. Application shutdown cancels active receive and polling operations and attempts a bounded close before releasing each socket.

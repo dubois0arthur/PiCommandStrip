@@ -8,6 +8,7 @@ using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.Protocol;
 using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
+using PiCommandStrip.App.SystemTelemetry;
 
 namespace PiCommandStrip.App.WebSockets;
 
@@ -89,6 +90,18 @@ public sealed class WebSocketConnectionManager(
         var sends = _connections.Values
             .Where(connection => connection.IsReadyForBroadcasts)
             .Select(connection => SendSpotifySafelyAsync(connection, state, cancellationToken));
+
+        await Task.WhenAll(sends);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    public async Task BroadcastSystemTelemetryAsync(
+        SystemTelemetryState state,
+        CancellationToken cancellationToken)
+    {
+        var sends = _connections.Values
+            .Where(connection => connection.IsReadyForBroadcasts)
+            .Select(connection => SendSystemTelemetrySafelyAsync(connection, state, cancellationToken));
 
         await Task.WhenAll(sends);
         cancellationToken.ThrowIfCancellationRequested();
@@ -249,6 +262,33 @@ public sealed class WebSocketConnectionManager(
             logger.LogWarning(
                 exception,
                 "Removed WebSocket connection {ConnectionId} after a Spotify broadcast failure",
+                connection.ConnectionId);
+        }
+    }
+
+    private async Task SendSystemTelemetrySafelyAsync(
+        WebSocketClientConnection connection,
+        SystemTelemetryState state,
+        CancellationToken cancellationToken)
+    {
+        using var sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        sendCancellation.CancelAfter(ClientSendTimeout);
+
+        try
+        {
+            await connection.SendSystemTelemetryAsync(state, messageFactory, sendCancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Application shutdown owns cancellation; the connection handler will close the socket.
+        }
+        catch (Exception exception)
+        {
+            Remove(connection.ConnectionId);
+            connection.Abort();
+            logger.LogWarning(
+                exception,
+                "Removed WebSocket connection {ConnectionId} after a system telemetry broadcast failure",
                 connection.ConnectionId);
         }
     }

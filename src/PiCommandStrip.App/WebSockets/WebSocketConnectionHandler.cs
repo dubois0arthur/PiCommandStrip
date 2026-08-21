@@ -9,6 +9,7 @@ using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
 using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
+using PiCommandStrip.App.SystemTelemetry;
 
 namespace PiCommandStrip.App.WebSockets;
 
@@ -22,6 +23,7 @@ public sealed class WebSocketConnectionHandler(
     BrowserSearchCatalog browserSearchCatalog,
     IMediaSessionService mediaSessionService,
     IAudioMixerService audioMixerService,
+    ISystemTelemetryService systemTelemetryService,
     ISpotifyService spotifyService,
     IBrowserIntegrationService browserIntegrationService,
     IResearchInboxService researchInboxService,
@@ -206,6 +208,7 @@ public sealed class WebSocketConnectionHandler(
                     contextStateCoordinator,
                     mediaSessionService,
                     audioMixerService,
+                    systemTelemetryService,
                     spotifyService,
                     browserIntegrationService,
                     researchInboxService,

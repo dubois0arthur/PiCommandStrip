@@ -9,6 +9,7 @@ using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
 using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
+using PiCommandStrip.App.SystemTelemetry;
 
 namespace PiCommandStrip.App.WebSockets;
 
@@ -24,6 +25,7 @@ public sealed class WebSocketClientConnection(
     private ContextState? _lastSentContextState;
     private MediaState? _lastSentMediaState;
     private AudioState? _lastSentAudioState;
+    private SystemTelemetryState? _lastSentSystemTelemetry;
     private SpotifyState? _lastSentSpotifyState;
     private BrowserState? _lastSentBrowserState;
     private long? _lastSentResearchInboxRevision;
@@ -68,6 +70,7 @@ public sealed class WebSocketClientConnection(
         ContextStateCoordinator contextStateCoordinator,
         IMediaSessionService mediaSessionService,
         IAudioMixerService audioMixerService,
+        ISystemTelemetryService systemTelemetryService,
         ISpotifyService spotifyService,
         IBrowserIntegrationService browserIntegrationService,
         IResearchInboxService researchInboxService,
@@ -90,6 +93,10 @@ public sealed class WebSocketClientConnection(
                 cancellationToken);
             await SendAudioStateCoreAsync(
                 audioMixerService.Current,
+                messageFactory,
+                cancellationToken);
+            await SendSystemTelemetryCoreAsync(
+                systemTelemetryService.Current,
                 messageFactory,
                 cancellationToken);
             await SendSpotifyStateCoreAsync(
@@ -214,6 +221,27 @@ public sealed class WebSocketClientConnection(
         try
         {
             await SendSpotifyStateCoreAsync(state, messageFactory, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public async Task SendSystemTelemetryAsync(
+        SystemTelemetryState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (!IsReadyForBroadcasts)
+        {
+            return;
+        }
+
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await SendSystemTelemetryCoreAsync(state, messageFactory, cancellationToken);
         }
         finally
         {
@@ -445,6 +473,61 @@ public sealed class WebSocketClientConnection(
             messageFactory.Create(MessageTypes.SpotifyState, payload),
             cancellationToken);
         _lastSentSpotifyState = state;
+    }
+
+    private async Task SendSystemTelemetryCoreAsync(
+        SystemTelemetryState state,
+        ServerMessageFactory messageFactory,
+        CancellationToken cancellationToken)
+    {
+        if (_lastSentSystemTelemetry is not null &&
+            _lastSentSystemTelemetry.HasSameMeaningAs(state))
+        {
+            return;
+        }
+
+        var cpu = state.Cpu is null
+            ? null
+            : new CpuTelemetryPayload(
+                state.Cpu.Name,
+                state.Cpu.UtilizationPercent,
+                state.Cpu.TemperatureCelsius,
+                state.Cpu.TemperatureStatus);
+        var gpu = state.Gpu is null
+            ? null
+            : new GpuTelemetryPayload(
+                state.Gpu.Identifier,
+                state.Gpu.Name,
+                state.Gpu.UtilizationPercent,
+                state.Gpu.TemperatureCelsius,
+                state.Gpu.MemoryUsedBytes,
+                state.Gpu.MemoryTotalBytes,
+                state.Gpu.TemperatureStatus);
+        var memory = state.Memory is null
+            ? null
+            : new MemoryTelemetryPayload(state.Memory.UsedBytes, state.Memory.TotalBytes);
+        var diagnostics = new SystemTelemetryDiagnosticsPayload(
+            state.Diagnostics.ProviderName,
+            state.Diagnostics.ProviderStatus,
+            state.Diagnostics.CpuTemperatureSensor,
+            state.Diagnostics.GpuIdentifier,
+            state.Diagnostics.GpuName,
+            state.Diagnostics.GpuTemperatureSensor,
+            state.Diagnostics.UnavailableReasons);
+        var payload = new SystemTelemetryPayload(
+            state.Status,
+            cpu,
+            gpu,
+            memory,
+            state.TemperatureStatus,
+            state.Revision,
+            state.LastUpdatedUtc,
+            diagnostics);
+
+        await SendCoreAsync(
+            messageFactory.Create(MessageTypes.SystemTelemetry, payload),
+            cancellationToken);
+        _lastSentSystemTelemetry = state;
     }
 
     private async Task SendBrowserStateCoreAsync(

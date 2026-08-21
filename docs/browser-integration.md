@@ -85,7 +85,7 @@ Add a future Scholar, PubMed, GitHub, or documentation provider by adding anothe
 
 ## Loopback protocol
 
-The extension protocol is version `3`, separate from Pi dashboard protocol version `13`. Client messages are exact-shape UTF-8 JSON envelopes and are limited to 8,192 bytes.
+The extension protocol is version `3`, separate from Pi dashboard protocol version `14`. Client messages are exact-shape UTF-8 JSON envelopes and are limited to 8,192 bytes.
 
 The first message is `browser_hello`:
 

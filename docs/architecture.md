@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the architecture through the optional Spotify enrichment layer, touchscreen Windows audio mixer and output selector, context-aware Research workspace, local Research Inbox, local media-artwork support, and Firefox browser bridge. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 13 adds explicit Research Inbox capture/open commands and lightweight inbox invalidation while retaining generic Windows media authority, authentication, reconnection, command security, and LAN boundaries.
+This document describes the architecture through the optional Spotify enrichment layer, touchscreen Windows audio mixer and output selector, context-aware Research workspace, local Research Inbox, local media-artwork support, Firefox browser bridge, and read-only system telemetry. The ASP.NET Core host remains on Windows; the static dashboard can run locally or in a Pi browser. Protocol version 14 adds normalized retained system telemetry while retaining generic Windows media authority, authentication, reconnection, command security, and LAN boundaries.
 
 ## System shape
 
@@ -26,6 +26,8 @@ Windows PC
 |             +-- encrypted host refresh credential                |
 |                                                                  |
 |  Windows Core Audio --> audio mixer service --> audio store ------|
+|                                                                  |
+|  Windows metrics + hardware sensors --> telemetry service/store --|
 |                                                                  |
 |  Firefox extension -- loopback-only bridge --> browser store -----|
 |                                                                  |
@@ -128,6 +130,23 @@ The minimum scopes are `user-read-playback-state` (current item, device, queue, 
 
 Media and audio remain separate even when both describe Spotify or a browser. A media session answers “what is playing?” and follows the one session Windows considers current; it contains title, artist, artwork, timeline, and transport capabilities. An audio session answers “which render streams exist on this output?” and contains endpoint, volume, mute, process, and activity state. There may be many audio sessions for one media application, and many audio sessions with no media metadata at all.
 
+### Windows system-telemetry service
+
+- `ISystemTelemetryService` exposes the latest platform-neutral `SystemTelemetryState`. The WebSocket, dashboard, and future Gaming composition do not depend on P/Invoke or LibreHardwareMonitor types.
+- `IHardwareTelemetryProvider` is the replaceable internal acquisition seam. `WindowsHardwareTelemetryProvider` combines `GetSystemTimes` for overall CPU utilization and `GlobalMemoryStatusEx` for physical RAM with `LibreHardwareMonitorLib` 0.9.6 for CPU/GPU sensors.
+- LibreHardwareMonitor is configured with only CPU and GPU enabled. Motherboard, storage, network, controller, power-monitor, PSU, battery, memory/SPD, fan, and other subsystems remain disabled. The package is not used to control hardware.
+- `SystemTelemetryNormalizer` performs deterministic sensor selection, unit conversion, rounding, threshold classification, and nullable missing-data handling. LibreHardwareMonitor types never cross the provider boundary.
+- CPU temperature prefers a package/aggregate sensor in this order: exact `CPU Package`, Ryzen `Core (Tctl/Tdie)`/equivalents, `Core Average`, `CCDs Average (Tdie)`, then a non-distance package label. Non-positive or implausible readings are unavailable rather than a false zero.
+- GPU selection first honors `PiCommandStrip:SystemTelemetry:PreferredGpu` as an exact provider identifier or exact hardware name. Otherwise, dedicated-memory-total evidence dominates the score, followed by AMD/NVIDIA preference and useful core sensors. This normally chooses the discrete gaming adapter over an integrated GPU without fuzzy display-name matching.
+- GPU temperature is only exact `GPU Core`; hotspot, memory-junction, VRM, and similarly named sensors are deliberately excluded. GPU utilization prefers exact `GPU Core` and falls back to exact `D3D 3D`. VRAM prefers `GPU Memory Used/Total` and can derive total from exact used/free values. LibreHardwareMonitor `SmallData` MiB values become bytes.
+- `SystemTelemetryService` samples immediately and then at a configurable one-second default cadence. The hosted loop observes cancellation; provider failures are contained and retried. Native CPU/RAM can continue as partial state when hardware sensors fail.
+- `SystemTelemetryStateStore` increments its revision only for normalized meaningful changes. Percentages and temperatures are rounded to one decimal place and RAM usage to 16 MiB, suppressing timestamp-only and insignificant changes without hiding the intended roughly 1 Hz view.
+- Provider status, selected CPU sensor, selected GPU/identifier, selected GPU temperature sensor, and fixed missing-data reasons are logged only when diagnostics change and are available in System Details. Metric values are not written to routine logs.
+
+LibreHardwareMonitor is necessary because Windows has no public CPU/GPU package-temperature API. Microsoft documents that `Win32_TemperatureProbe.CurrentReading` is not populated by current WMI implementations. Performance counters can provide load but not reliable modern CPU/GPU temperatures. Some low-level sensor access requires administrator privileges or compatible firmware/driver support; absent access produces explicit partial state and never prevents PiCommandStrip from starting.
+
+FPS, frametime, power, clocks, fans, history, and notifications are not collected. FPS is not a hardware sensor and should later enter through a separately paced, game-aware performance provider such as a carefully bounded PresentMon/ETW integration. That future signal can compose into Gaming context beside this retained hardware state without changing the current provider or flooding the general WebSocket stream.
+
 ### Optional Firefox browser integration
 
 - `IBrowserIntegrationService` exposes normalized browser state without making context, protocol, or frontend code depend on WebExtension details.
@@ -135,7 +154,7 @@ Media and audio remain separate even when both describe Spotify or a browser. A 
 - The bridge has its own 32-byte Base64 pairing token and failed-authentication limiter. It does not accept the Pi token, and the extension never receives the Pi token. Pairing timestamps are fresh-only and tokens are compared in constant time.
 - The bridge protocol is independently versioned at `3`. Extension-to-host messages are limited to exact `browser_hello`, `browser_state_update`, and `browser_command_result` shapes with an 8 KiB receive limit. The host can send only a typed `browser_command`; one channel-level send lock prevents command/error sends from overlapping on a socket.
 - `BrowserStateNormalizer` accepts only HTTP/HTTPS URLs, removes URI user information and fragments, derives an IDN-normalized hostname, and bounds title/URL/selection fields. Selected-text truncation avoids leaving an unmatched UTF-16 high surrogate.
-- Selected text is never logged or persisted merely because browser state changed. Protocol version 13 sends it only to authenticated Pi clients while Browser context is active, where `research-workspace.js` normalizes whitespace and limits its rendered preview to 180 characters. Persistence occurs only through the explicit Save command described below.
+- Selected text is never logged or persisted merely because browser state changed. Protocol version 14 sends it only to authenticated Pi clients while Browser context is active, where `research-workspace.js` normalizes whitespace and limits its rendered preview to 180 characters. Persistence occurs only through the explicit Save command described below.
 - `BrowserIntegrationService` serializes connection/update/disconnect transitions. The newest authenticated Firefox instance becomes authoritative, and an old socket cannot clear newer state when it eventually disconnects.
 - `BrowserStateStore` suppresses timestamp-only/duplicate changes. Connect, meaningful tab/title/URL/selection changes, and disconnect are broadcast to authenticated Pi clients; disconnect clears all tab and selection data.
 - `IBrowserCommandService` is the only PC-command handler dependency for `browser.*`. It checks live connection/tab/capability/selection state, constructs searches through `BrowserSearchCatalog`, and delegates a fixed extension command through `IBrowserIntegrationService`.
@@ -171,12 +190,12 @@ Peak level is deliberately omitted from the current protocol. Core Audio exposes
 
 ### State and connection coordinator
 
-- Retains the latest foreground, context, media, audio, optional Spotify, optional browser, and lightweight Research Inbox states so a newly authenticated dashboard receives immediate snapshots.
+- Retains the latest foreground, context, media, audio, system telemetry, optional Spotify, optional browser, and lightweight Research Inbox states so a newly authenticated dashboard receives immediate snapshots.
 - Tracks active WebSocket connections needed for broadcasting.
 - Serializes outbound sends per socket; WebSocket implementations should not be asked to perform overlapping sends on the same connection.
 - Removes closed or failed connections and does not let one slow client block monitoring or shutdown indefinitely.
 
-The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, media, audio, Spotify, browser, and inbox revisions. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
+The implementation separates the latest-state stores from a `ConcurrentDictionary`-backed WebSocket registry. Each connection serializes its own sends and suppresses duplicate foreground, context, media, audio, system telemetry, Spotify, browser, and inbox revisions. Broadcast sends have an independent two-second timeout, so a failed client is removed and aborted without preventing delivery to other clients.
 
 ### WebSocket endpoint and protocol
 
@@ -187,7 +206,7 @@ The implementation separates the latest-state stores from a `ConcurrentDictionar
 - Rejects malformed, oversized, unknown, or directionally invalid messages.
 - Observes cancellation and handles normal browser disconnects without reporting them as host failures.
 
-The implemented version 13 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, `audio_state`, `spotify_state`, `browser_state`, and `research_inbox_state` snapshots. Spotify and browser state are enrichment only; Windows foreground/media/audio events continue to update independently.
+The implemented version 14 protocol is specified in [protocol.md](protocol.md). A compatible and authenticated `client_hello` is required before state, selection, ping, or commands are accepted. Authentication sends retained `pc_state`, `context_state`, `media_state`, `audio_state`, `system_telemetry`, `spotify_state`, `browser_state`, and `research_inbox_state` snapshots. Spotify and browser state are enrichment only; Windows foreground/media/audio/telemetry updates continue independently.
 
 A **WebSocket** begins as an HTTP request and upgrades to a persistent, full-duplex connection. Either side can then send framed messages without repeated HTTP polling. Native WebSockets keep this milestone's transport visible and dependency-free.
 
@@ -213,6 +232,7 @@ The allowlist is the central safety boundary. Browser-provided values must never
 - Matches capabilities conservatively in `capability-matching.js`: exact normalized process/source identity comes first, then a short explicit family map for Spotify, Firefox, Chrome, Edge, and Discord. Browser foreground-window/media-title equality is the only fallback for an opaque Windows media source. Display names are never fuzzy-matched, and multiple possible audio entries produce no inline control.
 - Provides a reusable compact touch-action grid for context-owned commands. The current production grid contains only a System Details entry; prototype Notepad and manual latency actions no longer consume primary workspace area. Their server command/diagnostic behavior remains available without weakening the allowlist.
 - Uses compact bottom navigation for Home/Automatic, Media, Audio, and More/System. Audio pins the existing Audio context and includes the current master percentage as a small global entry point. The context header and More button open the same diagnostics sheet, which contains manual context selection and technical details.
+- Places one reusable compact CPU/GPU/RAM telemetry component in otherwise-unused navigation-row width. It adds no workspace row at 1024x600, stays secondary in normal contexts, exposes partial/unavailable metrics explicitly, and can later be promoted by Gaming context without changing its state source.
 - Connects to the WebSocket endpoint and displays connecting, connected, disconnected, and retrying states.
 - Renders one reusable Now Playing template/controller in two hosts: expanded as the primary workspace when media has the highest value, and compact beneath another context's higher-value workspace. Both variants receive the same normalized state, command callback, capability logic, artwork fallback, seek logic, and progress baseline. Keeping paused sessions visible preserves the user's path to resume playback.
 - Shows prominent square-cropped artwork in Media context and a small compact thumbnail only when available. A deliberate local fallback occupies the expanded artwork region; text remains on an opaque surface so extreme artwork brightness cannot reduce readability.
@@ -236,7 +256,7 @@ The allowlist is the central safety boundary. Browser-provided values must never
 
 The dynamic workspace remains the extension seam for future capabilities. `context-composition.js` is a presentation policy and view coordinator, not a second state store: it derives which existing capabilities to show, mounts contextual volume rows into either the workspace or expanded Now Playing accessory slot, and delegates every mutation to the same `AudioMixerController`. The full Audio destination remains the complete mixer. Removing an audio entry disposes its interaction controller immediately, while server-side application-ID revalidation still protects a command already in flight.
 
-The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, `ui.js` owns the overall shell, `research-workspace.js` owns bounded Research view derivation/browser/Save controls, `research-inbox.js` owns authenticated bounded HTTP access plus list/detail interaction, `capability-matching.js` owns strict cross-signal identity rules, `context-composition.js` owns context presentation policy, `now-playing.js` owns reusable media rendering, `spotify-controls.js` owns optional Spotify controls/queue presentation, and `audio-mixer.js` owns the shared optimistic/coalesced volume interaction. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
+The browser code uses native JavaScript modules without a build step. `dashboard.js` coordinates startup and events, `protocol.js` owns WebSocket lifecycle and message correlation, `ui.js` owns the overall shell, `system-telemetry.js` owns reusable compact telemetry/diagnostic rendering, `research-workspace.js` owns bounded Research view derivation/browser/Save controls, `research-inbox.js` owns authenticated bounded HTTP access plus list/detail interaction, `capability-matching.js` owns strict cross-signal identity rules, `context-composition.js` owns context presentation policy, `now-playing.js` owns reusable media rendering, `spotify-controls.js` owns optional Spotify controls/queue presentation, and `audio-mixer.js` owns the shared optimistic/coalesced volume interaction. A manual pin lives in the Windows host, so reconnecting clients receive the authoritative current mode without storing profile state in the browser.
 
 Repository-local module URLs share one manually advanced frontend version token. This is intentionally simpler than adding a build pipeline and prevents a long-lived Pi browser cache from combining incompatible HTML or JavaScript modules after an update.
 
@@ -294,6 +314,17 @@ The finalized, direction-specific UTF-8 JSON envelopes and payload examples are 
 
 Pins are intentionally in-memory and server-wide for this single-user, shared-token appliance. They reset to Automatic when the host restarts. Per-user persistence would require identity and storage requirements that are outside this milestone.
 
+### System telemetry
+
+1. The hosted telemetry service asks `IHardwareTelemetryProvider` for one snapshot immediately at startup and then every configured interval (1,000 ms by default).
+2. The Windows provider samples cumulative system idle/kernel/user times and computes overall CPU utilization from the delta between two readings. The first reading therefore has no utilization value. It also reads used/total physical RAM directly from Windows.
+3. The same provider updates only the LibreHardwareMonitor CPU/GPU hardware nodes and projects only temperature, load, and small-data sensor facts into library-free records.
+4. The normalizer selects one aggregate CPU temperature, one preferred/discrete GPU, its core temperature/load, and VRAM. Missing, invalid, inaccessible, or unsupported facts remain `null` and receive fixed diagnostic reasons.
+5. Configured temperature bands classify readings as normal/elevated/warning. This is display policy only; the service does not notify, throttle, terminate, or otherwise control the PC.
+6. The state store compares normalized meaning. A change increments revision and broadcasts `system_telemetry`; an identical observation does nothing. Authentication sends the retained value after `audio_state`.
+7. Provider exceptions are logged locally and become degraded/partial or unavailable state. Later samples retry and log recovery only when diagnostic status changes.
+8. The dashboard renders the same state in a compact global component. A future Gaming workspace can promote that component without adding a second telemetry reader or protocol stream.
+
 ### Browser state
 
 1. Firefox observes active-tab activation, URL/title/status changes, focused-window changes, tab removal, top-frame selection changes, and Navigation API capability changes using events.
@@ -332,6 +363,7 @@ Pins are intentionally in-memory and server-wide for this single-user, shared-to
 - Do not log full arbitrary inbound payloads, stack traces to the browser, secrets, or more window-title content than is operationally necessary.
 - Treat malformed client input as a request failure, not a host failure.
 - Treat expected Windows inspection races as recoverable, log them at debug level, and continue monitoring.
+- Log telemetry provider/sensor selection and missing reasons only when they change; do not log every sampled CPU/GPU/RAM value.
 - Put sensible bounds on inbound message size and command duration.
 - On host shutdown, stop polling, stop accepting work, cancel active operations, close sockets when practical, and let the ASP.NET Core host exit cleanly.
 
@@ -358,6 +390,10 @@ The first automated tests should focus on behavior that can run without an inter
 - invalid, missing, fractional, or unexpected seek parameters are rejected before dispatch;
 - validated seek positions reach the media service as a `TimeSpan`, and session-disappearance failures remain safe command results;
 - cancellation stops the monitoring loop and command handlers.
+- CPU package/aggregate and GPU core sensor selection are deterministic across multiple candidates;
+- multiple GPUs prefer dedicated-memory evidence or an exact configured adapter, while hotspot sensors are not mislabeled as GPU core;
+- missing CPU/GPU/VRAM/memory values, zero/invalid temperatures, and provider failure remain nullable and produce explicit availability state;
+- normalized duplicate telemetry samples are suppressed, meaningful changes increment revision, and threshold bands follow configuration;
 - valid/malformed bridge envelopes, pairing failures, URL/domain normalization, duplicate suppression, tab changes, selection clearing/truncation, stale connection ownership, and disconnect clearing behave deterministically without Firefox;
 - search templates require one absolute HTTPS placeholder, selections are percent-encoded, empty/unknown actions fail, navigation capabilities gate commands, and stale tab/bridge results remain browser-safe.
 
@@ -370,6 +406,8 @@ The app and tests target `net10.0-windows10.0.19041.0`. On modern .NET, that Win
 The Firefox bridge adds no .NET or JavaScript dependency. It uses Kestrel/native WebSockets, `System.Text.Json`, built-in cryptography, and standard Mozilla WebExtensions APIs. Firefox 147 is the minimum declared extension version because its current Manifest V3 policy permits the explicit loopback `ws:` CSP source for temporarily loaded extensions. Temporary installation remains a development path; signed distribution may require WSS or further Mozilla policy review.
 
 Core Audio application sessions are classic COM APIs rather than WinRT and are not supplied as convenient .NET SDK projections. The application therefore references only stable `NAudio.Wasapi` 2.3.0 (which brings its small `NAudio.Core` dependency) for endpoint/session enumeration, callbacks, volume, and release logic. The broad `NAudio` metapackage and NAudio 3 preview are not used. NAudio intentionally does not expose a system-default setter because Windows has no public one; the small PolicyConfig vtable needed solely for that operation is maintained in one isolated adapter and documented as an unsupported compatibility risk.
+
+Temperature is the one telemetry requirement that built-in Windows APIs cannot meet reliably. The app therefore references stable `LibreHardwareMonitorLib` 0.9.6 under MPL-2.0. Its public package has transitive helpers for its broad hardware support, but PiCommandStrip enables only CPU and GPU categories and imports the library only in `WindowsHardwareTelemetryProvider`. Native Windows functions remain the narrower sources for overall CPU utilization and physical RAM. Performance Counter/WMI-only designs were rejected because they do not provide dependable modern CPU/GPU temperatures; Microsoft documents the standard WMI temperature current reading as unpopulated. Direct vendor APIs were rejected because separate AMD/NVIDIA/Intel integrations would be larger, less portable across the user's present and future hardware, and harder to recover safely.
 
 The installed stable .NET SDK is pinned with `global.json`. The test project uses `Microsoft.NET.Test.Sdk` to host test execution, `xunit` for the test API and assertions, and `xunit.runner.visualstudio` for test discovery through the .NET and Visual Studio test platform.
 

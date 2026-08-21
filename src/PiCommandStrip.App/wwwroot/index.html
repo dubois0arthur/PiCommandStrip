@@ -288,6 +288,27 @@
                 <span class="nav-icon" aria-hidden="true">&#8943;</span>
                 <span>More</span>
             </button>
+            <section
+                id="system-telemetry"
+                class="system-telemetry"
+                data-status="unavailable"
+                aria-label="System telemetry unavailable"
+                data-debug-label="System telemetry">
+                <span class="system-telemetry-metric" data-telemetry-metric="cpu" data-temperature-status="unavailable">
+                    <span class="system-telemetry-label">CPU</span>
+                    <strong data-telemetry-value="cpu">&mdash;</strong>
+                    <span class="temperature-alert" data-telemetry-alert="cpu" hidden></span>
+                </span>
+                <span class="system-telemetry-metric" data-telemetry-metric="gpu" data-temperature-status="unavailable">
+                    <span class="system-telemetry-label">GPU</span>
+                    <strong data-telemetry-value="gpu">&mdash;</strong>
+                    <span class="temperature-alert" data-telemetry-alert="gpu" hidden></span>
+                </span>
+                <span class="system-telemetry-metric" data-telemetry-metric="memory">
+                    <span class="system-telemetry-label">RAM</span>
+                    <strong data-telemetry-value="memory">&mdash;</strong>
+                </span>
+            </section>
         </nav>
     </div>
 
@@ -334,6 +355,29 @@
                 <dd id="diagnostic-protocol">WebSocket</dd>
             </div>
         </dl>
+
+        <section class="telemetry-diagnostics" aria-labelledby="telemetry-diagnostics-heading">
+            <h3 id="telemetry-diagnostics-heading">Hardware telemetry</h3>
+            <dl class="diagnostic-grid telemetry-diagnostic-grid">
+                <div>
+                    <dt>Provider</dt>
+                    <dd id="telemetry-provider">Initializing</dd>
+                </div>
+                <div>
+                    <dt>CPU sensor</dt>
+                    <dd id="telemetry-cpu-sensor">&mdash;</dd>
+                </div>
+                <div>
+                    <dt>Selected GPU</dt>
+                    <dd id="telemetry-gpu">&mdash;</dd>
+                </div>
+                <div>
+                    <dt>GPU sensor</dt>
+                    <dd id="telemetry-gpu-sensor">&mdash;</dd>
+                </div>
+            </dl>
+            <p id="telemetry-unavailable-reasons" class="telemetry-unavailable-reasons" hidden></p>
+        </section>
 
         <button id="ping-button" class="touch-action diagnostic-action" type="button" disabled>
             <span class="touch-action-icon" aria-hidden="true">&#8644;</span>
@@ -477,6 +521,6 @@
         <span>Ctrl+Shift+D to close</span>
     </aside>
 
-    <script type="module" src="/js/dashboard.js?v=17"></script>
+    <script type="module" src="/js/dashboard.js?v=18"></script>
 </body>
 </html>

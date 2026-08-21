@@ -10,6 +10,7 @@ using PiCommandStrip.App.MediaSessions;
 using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
+using PiCommandStrip.App.SystemTelemetry;
 using PiCommandStrip.App.WebSockets;
 
 var contentRootPath = ContentRootPathResolver.Resolve(
@@ -42,6 +43,8 @@ var piCommandStripOptions = builder.Configuration
     ?? throw new InvalidOperationException("PiCommandStrip configuration is required.");
 var networkOptions = PiCommandStripOptionsValidator.ValidateNetwork(piCommandStripOptions.Network);
 var commandCooldown = PiCommandStripOptionsValidator.ValidateCommandCooldown(piCommandStripOptions.Commands);
+var systemTelemetryConfiguration = PiCommandStripOptionsValidator.ValidateSystemTelemetry(
+    piCommandStripOptions.SystemTelemetry);
 var browserIntegrationConfiguration = BrowserIntegrationConfiguration.Create(
     piCommandStripOptions.BrowserIntegration,
     networkOptions.Port);
@@ -76,6 +79,7 @@ builder.Services.AddPiCommandStripContexts(piCommandStripOptions.Contexts);
 builder.Services.AddForegroundWindowMonitoring();
 builder.Services.AddWindowsMediaSessionMonitoring();
 builder.Services.AddWindowsAudioMixerMonitoring();
+builder.Services.AddSystemTelemetryMonitoring(systemTelemetryConfiguration);
 builder.Services.AddResearchInbox();
 
 var app = builder.Build();

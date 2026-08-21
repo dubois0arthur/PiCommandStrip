@@ -8,6 +8,7 @@ public static class MessageTypes
     public const string MediaState = "media_state";
     public const string SpotifyState = "spotify_state";
     public const string AudioState = "audio_state";
+    public const string SystemTelemetry = "system_telemetry";
     public const string BrowserState = "browser_state";
     public const string ResearchInboxState = "research_inbox_state";
     public const string ContextSelectionResult = "context_selection_result";

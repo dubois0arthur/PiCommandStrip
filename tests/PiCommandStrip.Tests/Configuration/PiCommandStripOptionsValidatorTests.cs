@@ -5,6 +5,47 @@ namespace PiCommandStrip.Tests.Configuration;
 
 public sealed class PiCommandStripOptionsValidatorTests
 {
+    [Fact]
+    public void ValidateSystemTelemetry_AcceptsAdjustableThresholdsAndPreferredGpu()
+    {
+        var configuration = PiCommandStripOptionsValidator.ValidateSystemTelemetry(
+            new SystemTelemetryOptions
+            {
+                PollIntervalMilliseconds = 1_500,
+                PreferredGpu = " gpu-amd/0 ",
+                CpuElevatedTemperatureCelsius = 70,
+                CpuWarningTemperatureCelsius = 88,
+                GpuElevatedTemperatureCelsius = 72,
+                GpuWarningTemperatureCelsius = 90
+            });
+
+        Assert.Equal(TimeSpan.FromMilliseconds(1_500), configuration.PollInterval);
+        Assert.Equal("gpu-amd/0", configuration.PreferredGpu);
+        Assert.Equal(88, configuration.CpuWarningTemperatureCelsius);
+    }
+
+    [Theory]
+    [InlineData(499, 75, 90)]
+    [InlineData(1000, 90, 90)]
+    [InlineData(1000, 91, 90)]
+    public void ValidateSystemTelemetry_RejectsInvalidRateOrCpuThresholds(
+        int interval,
+        double elevated,
+        double warning)
+    {
+        var exception = Record.Exception(() =>
+            PiCommandStripOptionsValidator.ValidateSystemTelemetry(
+                new SystemTelemetryOptions
+                {
+                    PollIntervalMilliseconds = interval,
+                    CpuElevatedTemperatureCelsius = elevated,
+                    CpuWarningTemperatureCelsius = warning
+                }));
+
+        Assert.NotNull(exception);
+        Assert.True(exception is ArgumentOutOfRangeException or InvalidOperationException);
+    }
+
     [Theory]
     [InlineData(100, 100)]
     [InlineData(750, 750)]

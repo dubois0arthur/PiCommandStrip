@@ -1,11 +1,11 @@
-import { MuteButtonController, VolumeSliderController } from "./audio-mixer.js?v=17";
+import { MuteButtonController, VolumeSliderController } from "./audio-mixer.js?v=18";
 import {
     matchForegroundAudioApplication,
     matchMediaAudioApplication,
     mediaBelongsToForeground,
     normalizeProcessName,
     selectGamingAudioApplications
-} from "./capability-matching.js?v=17";
+} from "./capability-matching.js?v=18";
 
 function applicationEntry(application, role) {
     return {

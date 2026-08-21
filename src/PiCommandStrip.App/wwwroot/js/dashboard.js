@@ -1,6 +1,6 @@
-import { DashboardSocket } from "./protocol.js?v=17";
-import { ResearchInboxApi } from "./research-inbox.js?v=17";
-import { dashboardUi } from "./ui.js?v=17";
+import { DashboardSocket } from "./protocol.js?v=18";
+import { ResearchInboxApi } from "./research-inbox.js?v=18";
+import { dashboardUi } from "./ui.js?v=18";
 
 const automaticPingIntervalMilliseconds = 10000;
 const tokenStorageKey = "pi-command-strip-token";
@@ -345,6 +345,10 @@ const dashboardSocket = new DashboardSocket({
 
     onResearchInboxState(state) {
         dashboardUi.renderResearchInboxState(state);
+    },
+
+    onSystemTelemetry(state) {
+        dashboardUi.renderSystemTelemetry(state);
     },
 
     onContextSelectionResult(result) {

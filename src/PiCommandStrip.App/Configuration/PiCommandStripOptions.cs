@@ -15,6 +15,8 @@ public sealed class PiCommandStripOptions
     public SpotifyOptions Spotify { get; init; } = new();
 
     public BrowserIntegrationOptions BrowserIntegration { get; init; } = new();
+
+    public SystemTelemetryOptions SystemTelemetry { get; init; } = new();
 }
 
 public sealed class NetworkOptions
@@ -72,6 +74,32 @@ public sealed class BrowserSearchActionOptions
     public string UrlTemplate { get; init; } = string.Empty;
 }
 
+public sealed class SystemTelemetryOptions
+{
+    public bool Enabled { get; init; } = true;
+
+    public int PollIntervalMilliseconds { get; init; } = 1_000;
+
+    public string PreferredGpu { get; init; } = string.Empty;
+
+    public double CpuElevatedTemperatureCelsius { get; init; } = 75;
+
+    public double CpuWarningTemperatureCelsius { get; init; } = 90;
+
+    public double GpuElevatedTemperatureCelsius { get; init; } = 75;
+
+    public double GpuWarningTemperatureCelsius { get; init; } = 85;
+}
+
+public sealed record SystemTelemetryConfiguration(
+    bool Enabled,
+    TimeSpan PollInterval,
+    string? PreferredGpu,
+    double CpuElevatedTemperatureCelsius,
+    double CpuWarningTemperatureCelsius,
+    double GpuElevatedTemperatureCelsius,
+    double GpuWarningTemperatureCelsius);
+
 public sealed record ValidatedNetworkOptions(bool LanEnabled, IPAddress ListenAddress, int Port)
 {
     public string DashboardUrl
@@ -127,5 +155,52 @@ public static class PiCommandStripOptionsValidator
         }
 
         return new ValidatedNetworkOptions(options.LanEnabled, listenAddress, options.Port);
+    }
+
+    public static SystemTelemetryConfiguration ValidateSystemTelemetry(
+        SystemTelemetryOptions options)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.PollIntervalMilliseconds, 500);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(options.PollIntervalMilliseconds, 10_000);
+        ValidateTemperatureThresholds(
+            options.CpuElevatedTemperatureCelsius,
+            options.CpuWarningTemperatureCelsius,
+            "CPU");
+        ValidateTemperatureThresholds(
+            options.GpuElevatedTemperatureCelsius,
+            options.GpuWarningTemperatureCelsius,
+            "GPU");
+
+        var preferredGpu = string.IsNullOrWhiteSpace(options.PreferredGpu)
+            ? null
+            : options.PreferredGpu.Trim();
+        if (preferredGpu?.Length > 200)
+        {
+            throw new InvalidOperationException(
+                "PiCommandStrip:SystemTelemetry:PreferredGpu must be 200 characters or fewer.");
+        }
+
+        return new SystemTelemetryConfiguration(
+            options.Enabled,
+            TimeSpan.FromMilliseconds(options.PollIntervalMilliseconds),
+            preferredGpu,
+            options.CpuElevatedTemperatureCelsius,
+            options.CpuWarningTemperatureCelsius,
+            options.GpuElevatedTemperatureCelsius,
+            options.GpuWarningTemperatureCelsius);
+    }
+
+    private static void ValidateTemperatureThresholds(
+        double elevated,
+        double warning,
+        string metricName)
+    {
+        if (!double.IsFinite(elevated) || !double.IsFinite(warning) ||
+            elevated < 1 || elevated > 150 || warning < 1 || warning > 150 ||
+            warning <= elevated)
+        {
+            throw new InvalidOperationException(
+                $"{metricName} telemetry thresholds must be finite values from 1 through 150 °C, with Warning greater than Elevated.");
+        }
     }
 }

@@ -13,6 +13,7 @@ using PiCommandStrip.App.PcCommands;
 using PiCommandStrip.App.Protocol;
 using PiCommandStrip.App.ResearchInbox;
 using PiCommandStrip.App.Spotify;
+using PiCommandStrip.App.SystemTelemetry;
 using PiCommandStrip.App.WebSockets;
 
 namespace PiCommandStrip.Tests.WebSockets;
@@ -36,6 +37,7 @@ public sealed class WebSocketAuthenticationTests
         Assert.Contains(MessageTypes.ContextState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.MediaState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.AudioState, fixture.Socket.SentMessageTypes);
+        Assert.Contains(MessageTypes.SystemTelemetry, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.SpotifyState, fixture.Socket.SentMessageTypes);
         Assert.Contains(MessageTypes.BrowserState, fixture.Socket.SentMessageTypes);
     }
@@ -179,6 +181,7 @@ public sealed class WebSocketAuthenticationTests
             new BrowserSearchCatalog(new BrowserIntegrationOptions()),
             new StubMediaSessionService(timeProvider),
             new StubAudioMixerService(timeProvider),
+            new StubSystemTelemetryService(timeProvider),
             new StubSpotifyService(timeProvider),
             new StubBrowserIntegrationService(timeProvider),
             new StubResearchInboxService(timeProvider),
@@ -352,6 +355,13 @@ public sealed class WebSocketAuthenticationTests
             LastPositionMilliseconds = invocation.PositionMilliseconds;
             return Task.FromResult(PcCommandExecutionResult.Success("Command completed."));
         }
+    }
+
+    private sealed class StubSystemTelemetryService(TimeProvider timeProvider)
+        : ISystemTelemetryService
+    {
+        public SystemTelemetryState Current { get; } =
+            SystemTelemetryState.Unavailable(timeProvider.GetUtcNow());
     }
 
     private sealed class StubBrowserIntegrationService(TimeProvider timeProvider)

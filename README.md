@@ -9,6 +9,7 @@ Implemented features include:
 - Windows foreground-application detection with change-only broadcasts;
 - Windows system media-session discovery and normalized change-only state broadcasts;
 - Windows Core Audio output-device/application-session discovery with normalized change-only mixer state and touch output selection;
+- one-second normalized CPU/GPU/RAM telemetry with explicit partial/unavailable sensor state;
 - capability-aware Windows media controls and a touch-oriented Now Playing interface;
 - optional Spotify saved-state, shuffle, repeat, queue, and playback-device enrichment;
 - optional Firefox active-tab and selected-text-presence enrichment through a loopback-only bridge;
@@ -25,7 +26,7 @@ Browser input cannot select a path, shell, script, arguments, or executable. LAN
 - .NET SDK `10.0.302`, pinned by `global.json`
 - Windows 10 version 2004 or later for foreground detection, system media sessions, Core Audio mixer state, and Notepad execution
 
-No Node.js, npm, or frontend packages are required. The application references only stable `NAudio.Wasapi` 2.3.0 for classic Windows Core Audio device/session COM wrappers; it does not use NAudio playback, capture, codec, MIDI, DSP, or UI packages. Test-only packages are `Microsoft.NET.Test.Sdk`, `xunit`, and `xunit.runner.visualstudio`.
+No Node.js, npm, or frontend packages are required. The application uses stable `NAudio.Wasapi` 2.3.0 for classic Windows Core Audio device/session COM wrappers, `LibreHardwareMonitorLib` 0.9.6 for read-only CPU/GPU sensors that Windows does not expose through a reliable public temperature API, and `Microsoft.Data.Sqlite` for the local Research Inbox. PiCommandStrip enables only LibreHardwareMonitor CPU/GPU categories and does not use NAudio playback, capture, codec, MIDI, DSP, or UI packages. Test-only packages are `Microsoft.NET.Test.Sdk`, `xunit`, and `xunit.runner.visualstudio`.
 
 ## Generate the pre-shared token
 
@@ -169,6 +170,23 @@ Multiple sessions with the same recognizable process name are grouped into one a
 The Audio destination provides touch-friendly master and application volume/mute controls. Tapping the current output opens a compact list of active Windows playback endpoints; a selection is accepted only when its opaque ID still exists in the current mixer state, and the UI waits for authoritative confirmation. Slider changes are coalesced during a drag and always send a final release value; incoming `audio_state` remains authoritative. Application IDs are likewise resolved against current state before the Windows-specific service changes any underlying sessions. Microphones, per-application device routing, communications-device selection, peak meters, and equalization remain out of scope.
 
 Windows publicly supports playback-endpoint enumeration and default-change observation, but it does not publish a desktop API for setting the system default. PiCommandStrip isolates the private PolicyConfig COM mechanism used by established Windows switchers, changes the Console and Multimedia roles, and leaves Communications unchanged. This is a best-effort Windows 10/11 integration: a future Windows update could require maintenance to that adapter. No extra package, shell command, registry path, or external switcher is used.
+
+## System hardware telemetry
+
+The Windows host publishes a separate read-only `system_telemetry` state about once per second. Overall CPU utilization comes from Windows system timing, physical RAM from Windows memory status, and CPU/GPU temperatures, GPU core utilization, and VRAM from the isolated LibreHardwareMonitor provider. The compact CPU/GPU/RAM readout lives in the existing navigation band, so normal workspaces lose no height. System Details shows the provider, selected sensors/GPU, and fixed unavailable reasons.
+
+Default presentation thresholds are CPU 75 °C elevated / 90 °C warning and GPU 75 °C elevated / 85 °C warning. They are visual bands, not claims that the PC is dangerous. Adjust them outside Git with these configuration keys:
+
+```text
+PiCommandStrip:SystemTelemetry:CpuElevatedTemperatureCelsius
+PiCommandStrip:SystemTelemetry:CpuWarningTemperatureCelsius
+PiCommandStrip:SystemTelemetry:GpuElevatedTemperatureCelsius
+PiCommandStrip:SystemTelemetry:GpuWarningTemperatureCelsius
+```
+
+Collection defaults to 1,000 ms and accepts 500–10,000 ms through `PiCommandStrip:SystemTelemetry:PollIntervalMilliseconds`. Multi-GPU selection normally prefers dedicated-memory evidence, then discrete AMD/NVIDIA hardware. To override it, set `PiCommandStrip:SystemTelemetry:PreferredGpu` to the exact identifier or exact name shown in System Details (for example `/gpu-amd/5`). Missing sensors remain unavailable; the UI never substitutes zero. Some LibreHardwareMonitor sensor access requires administrator rights or compatible firmware/drivers. PiCommandStrip continues with native CPU/RAM and any accessible GPU facts when a sensor is unavailable.
+
+The current telemetry milestone deliberately excludes FPS, power, clocks, fans, per-core temperatures, processes, disk/network throughput, history, alerts, and control actions. A future Gaming milestone can promote the same compact component. FPS should be a separate game/performance signal (for example a carefully bounded PresentMon/ETW provider), not inferred from the one-second hardware-sensor loop.
 
 ## Project layout
 

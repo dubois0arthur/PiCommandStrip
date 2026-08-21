@@ -1,12 +1,13 @@
-import { AudioMixerController } from "./audio-mixer.js?v=17";
+import { AudioMixerController } from "./audio-mixer.js?v=18";
 import {
     buildContextComposition,
     ContextCompositionController
-} from "./context-composition.js?v=17";
-import { NowPlayingController } from "./now-playing.js?v=17";
-import { ResearchInboxController } from "./research-inbox.js?v=17";
-import { ResearchWorkspaceController } from "./research-workspace.js?v=17";
-import { SpotifyControlsController } from "./spotify-controls.js?v=17";
+} from "./context-composition.js?v=18";
+import { NowPlayingController } from "./now-playing.js?v=18";
+import { ResearchInboxController } from "./research-inbox.js?v=18";
+import { ResearchWorkspaceController } from "./research-workspace.js?v=18";
+import { SpotifyControlsController } from "./spotify-controls.js?v=18";
+import { SystemTelemetryController } from "./system-telemetry.js?v=18";
 
 const elements = {
     activityAnnouncer: document.querySelector("#activity-announcer"),
@@ -81,6 +82,12 @@ const elements = {
     researchInboxClose: document.querySelector("#research-inbox-close"),
     researchInboxOpen: document.querySelector("#research-inbox-open"),
     researchInboxCount: document.querySelector("#research-inbox-count"),
+    systemTelemetry: document.querySelector("#system-telemetry"),
+    telemetryCpuSensor: document.querySelector("#telemetry-cpu-sensor"),
+    telemetryGpu: document.querySelector("#telemetry-gpu"),
+    telemetryGpuSensor: document.querySelector("#telemetry-gpu-sensor"),
+    telemetryProvider: document.querySelector("#telemetry-provider"),
+    telemetryUnavailableReasons: document.querySelector("#telemetry-unavailable-reasons"),
     viewportDimensions: document.querySelector("#viewport-dimensions"),
     workspace: document.querySelector("#workspace"),
     workspaceDescription: document.querySelector("#workspace-description"),
@@ -138,6 +145,14 @@ const researchInbox = new ResearchInboxController({
     close: elements.researchInboxClose,
     openButton: elements.researchInboxOpen,
     count: elements.researchInboxCount
+});
+const systemTelemetry = new SystemTelemetryController({
+    root: elements.systemTelemetry,
+    provider: elements.telemetryProvider,
+    cpuSensor: elements.telemetryCpuSensor,
+    gpu: elements.telemetryGpu,
+    gpuSensor: elements.telemetryGpuSensor,
+    reasons: elements.telemetryUnavailableReasons
 });
 
 let connected = false;
@@ -573,6 +588,10 @@ export const dashboardUi = {
         researchInbox.setState(state);
     },
 
+    renderSystemTelemetry(state) {
+        systemTelemetry.setState(state);
+    },
+
     setProtocolVersion(version) {
         elements.diagnosticProtocol.textContent = `WebSocket v${version}`;
     },
@@ -726,6 +745,7 @@ export const dashboardUi = {
             elements.headerProcess.textContent = "Waiting for PC";
             elements.navMasterVolume.textContent = "--%";
             elements.navAudio.title = "Audio mixer unavailable while disconnected";
+            systemTelemetry.setState(null);
             elements.offlineMessage.textContent = state === "connecting"
                 ? "Connecting to the Windows host."
                 : "Trying to reconnect. Controls will return automatically.";
